@@ -82,6 +82,7 @@ exclude:
   - 'log1'
   - 'log2'
   - '*_log'
+  - '*_cswysk'
 
 ```
 

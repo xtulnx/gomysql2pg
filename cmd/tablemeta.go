@@ -333,26 +333,253 @@ func (tb *Table) ViewCreate(logDir string) (result []string) {
 	return result
 }
 
+// isWordChar reports whether b is a word character (letter, digit, underscore).
+func isWordChar(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
+}
+
+// stripOuterParens removes one matched outermost pair of parentheses if and
+// only if the entire string is enclosed in a single matched pair.
+func stripOuterParens(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) == 0 || s[0] != '(' {
+		return s
+	}
+	depth := 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				if i == len(s)-1 {
+					return strings.TrimSpace(s[1 : len(s)-1])
+				}
+				return s // outer paren closes before end — not a simple wrapper
+			}
+		}
+	}
+	return s // unbalanced
+}
+
+// fullyStripOuterParens repeatedly strips outermost parens until stable.
+func fullyStripOuterParens(s string) string {
+	for {
+		stripped := stripOuterParens(s)
+		if stripped == s {
+			return s
+		}
+		s = stripped
+	}
+}
+
+// joinPart represents one operand in a JOIN chain.
+type joinPart struct {
+	raw      string // table ref (possibly with alias) and optional ON/USING clause
+	joinType string // qualifier preceding JOIN: "LEFT", "RIGHT", "INNER", "CROSS", "FULL", ""
+}
+
+// splitTopLevelJoin splits s on JOIN keywords at parenthesis depth 0,
+// also capturing the JOIN type qualifier (LEFT, RIGHT, etc.) when present.
+func splitTopLevelJoin(s string) []joinPart {
+	upper := strings.ToUpper(s)
+	depth := 0
+	start := 0
+	var parts []joinPart
+	pendingJoinType := ""
+
+	i := 0
+	for i < len(s) {
+		ch := s[i]
+		if ch == '(' {
+			depth++
+			i++
+			continue
+		}
+		if ch == ')' {
+			depth--
+			i++
+			continue
+		}
+		if depth == 0 && i+4 <= len(upper) && upper[i:i+4] == "JOIN" {
+			// word-boundary check: char before must not be a word char
+			if i > 0 && isWordChar(s[i-1]) {
+				i++
+				continue
+			}
+			// char after "JOIN" must be space or end of string
+			if i+4 < len(s) && isWordChar(s[i+4]) {
+				i++
+				continue
+			}
+			// Extract the segment up to this JOIN keyword.
+			// The join type qualifier (LEFT, RIGHT, etc.) may be at the tail of this segment.
+			seg := strings.TrimSpace(s[start:i])
+			jt := ""
+			// Check if the segment ends with a known qualifier
+			for _, q := range []string{"LEFT OUTER", "RIGHT OUTER", "FULL OUTER", "LEFT", "RIGHT", "INNER", "CROSS", "FULL"} {
+				segUpper := strings.ToUpper(seg)
+				if strings.HasSuffix(segUpper, " "+q) || segUpper == q {
+					seg = strings.TrimSpace(seg[:len(seg)-len(q)])
+					jt = q
+					break
+				}
+			}
+			if len(parts) == 0 {
+				// First segment: record with whatever joinType was pending (empty for first)
+				parts = append(parts, joinPart{raw: seg, joinType: pendingJoinType})
+			} else {
+				parts = append(parts, joinPart{raw: seg, joinType: pendingJoinType})
+			}
+			pendingJoinType = jt
+			i += 4 // skip "JOIN"
+			start = i
+			continue
+		}
+		i++
+	}
+	// Append the last segment
+	parts = append(parts, joinPart{raw: strings.TrimSpace(s[start:]), joinType: pendingJoinType})
+	return parts
+}
+
+// findTopLevelKeyword returns the byte index of keyword kw at paren depth 0,
+// or -1 if not found.
+func findTopLevelKeyword(s, kw string) int {
+	upper := strings.ToUpper(s)
+	kwUpper := strings.ToUpper(kw)
+	depth := 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+		}
+		if depth == 0 && i+len(kw) <= len(s) && upper[i:i+len(kwUpper)] == kwUpper {
+			// word-boundary: preceding char must not be word char
+			if i > 0 && isWordChar(s[i-1]) {
+				continue
+			}
+			// following char must not be word char
+			if i+len(kw) < len(s) && isWordChar(s[i+len(kw)]) {
+				continue
+			}
+			return i
+		}
+	}
+	return -1
+}
+
+// buildFromClause converts join parts into a PostgreSQL FROM clause body.
+func buildFromClause(parts []joinPart) string {
+	if len(parts) == 0 {
+		return ""
+	}
+
+	// resolveSegment expands a segment that is fully enclosed in parens
+	// (e.g. "(t1 join t2)") into a PostgreSQL join chain.
+	// It only recurses when stripOuterParens makes actual progress — this
+	// prevents infinite recursion when a segment merely *starts with* "("
+	// but is not a fully-wrapped group (e.g. "(t1) alias").
+	var resolveSegment func(seg string) string
+	resolveSegment = func(seg string) string {
+		seg = strings.TrimSpace(seg)
+		stripped := stripOuterParens(seg) // one level only
+		if stripped == seg {
+			return seg // not a fully-wrapped group — use as table reference
+		}
+		subParts := splitTopLevelJoin(stripped)
+		return buildFromClause(subParts)
+	}
+
+	// First part: just the table reference
+	result := resolveSegment(parts[0].raw)
+
+	for _, p := range parts[1:] {
+		raw := strings.TrimSpace(p.raw)
+		jt := p.joinType
+		if jt == "" {
+			jt = "INNER"
+		}
+
+		// If the whole segment is a paren-wrapped sub-group (and stripping
+		// makes progress), expand it instead of treating it as a table ref.
+		strippedRaw := stripOuterParens(raw)
+		if strippedRaw != raw {
+			sub := resolveSegment(raw)
+			result += " " + sub
+			continue
+		}
+
+		// Find ON or USING at depth 0
+		onIdx := findTopLevelKeyword(raw, "ON")
+		usingIdx := findTopLevelKeyword(raw, "USING")
+
+		switch {
+		case onIdx >= 0:
+			tableRef := strings.TrimSpace(raw[:onIdx])
+			onExpr := strings.TrimSpace(raw[onIdx+2:])
+			result += " " + jt + " JOIN " + tableRef + " ON " + onExpr
+		case usingIdx >= 0:
+			tableRef := strings.TrimSpace(raw[:usingIdx])
+			usingExpr := strings.TrimSpace(raw[usingIdx+5:])
+			result += " " + jt + " JOIN " + tableRef + " USING " + usingExpr
+		default:
+			// No ON/USING — bare JOIN treated as CROSS JOIN
+			result += " CROSS JOIN " + resolveSegment(raw)
+		}
+	}
+	return result
+}
+
+// rewriteFromParen handles MySQL's nested parenthesized FROM … JOIN syntax,
+// converting it to PostgreSQL-compatible JOIN expressions.
+func rewriteFromParen(def string) string {
+	reFindFrom := regexp.MustCompile(`(?i)\bFROM\s*\(`)
+	loc := reFindFrom.FindStringIndex(def)
+	if loc == nil {
+		return def
+	}
+	openIdx := loc[1] - 1 // index of the '('
+	depth := 0
+	closeIdx := -1
+	for i := openIdx; i < len(def); i++ {
+		switch def[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				closeIdx = i
+			}
+		}
+		if closeIdx >= 0 {
+			break
+		}
+	}
+	if closeIdx < 0 {
+		return def // unbalanced — bail out safely
+	}
+	inner := def[openIdx+1 : closeIdx]
+	// Guard: if inner contains SELECT it's a subquery, leave unchanged
+	if regexp.MustCompile(`(?i)\bSELECT\b`).MatchString(inner) {
+		return def
+	}
+	stripped := fullyStripOuterParens(inner)
+	parts := splitTopLevelJoin(stripped)
+	rewritten := buildFromClause(parts)
+	before := def[:loc[0]]    // text before FROM keyword
+	after := def[closeIdx+1:] // text after the closing ')'
+	return before + "FROM " + rewritten + after
+}
+
 // transformViewDef 将 MySQL 视图定义（经过反引号/schema前缀/convert初步清理后）
 // 改写为 PostgreSQL 兼容的 SELECT 语句体。
 func transformViewDef(def string) string {
-	// 1. FROM (t1 join t2) WHERE  →  FROM t1, t2 WHERE
-	// MySQL 允许在 FROM 子句中用括号包裹不带 ON/USING 的 JOIN 列表，PostgreSQL 不支持。
-	// 用 [^()]+ 匹配内部（无嵌套括号），以区分子查询（子查询内部必然有 SELECT）。
-	reFromParen := regexp.MustCompile(`(?i)\bFROM\s*\(([^()]+)\)\s*(WHERE\b)`)
-	def = reFromParen.ReplaceAllStringFunc(def, func(match string) string {
-		sub := reFromParen.FindStringSubmatch(match)
-		if len(sub) < 3 {
-			return match
-		}
-		inner, whereKw := sub[1], sub[2]
-		reJoin := regexp.MustCompile(`(?i)\s+join\s+`)
-		tables := reJoin.Split(strings.TrimSpace(inner), -1)
-		for i, t := range tables {
-			tables[i] = strings.TrimSpace(t)
-		}
-		return "FROM " + strings.Join(tables, ", ") + " " + whereKw
-	})
+	// 1. 处理 MySQL FROM 子句中的嵌套括号和隐式 CROSS JOIN 语法
+	def = rewriteFromParen(def)
 
 	// 2. ifnull(x, y) → coalesce(x, y)
 	def = regexp.MustCompile(`(?i)\bifnull\s*\(`).ReplaceAllString(def, "coalesce(")
@@ -380,7 +607,6 @@ func transformViewDef(def string) string {
 }
 func (tb *Table) TriggerCreate(logDir string) (result []string) {
 	id := 0
-func (tb *Table) TriggerCreate(logDir string) (result []string) {	id := 0
 	failedCount := 0
 	startTime := time.Now()
 	var createSql string

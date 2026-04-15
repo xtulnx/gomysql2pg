@@ -125,7 +125,7 @@ func (tb *Table) TableCreate(logDir string, tblName string, ch chan struct{}) {
 			newTable.destType = "double precision"
 		case "float":
 			newTable.destType = "double precision"
-		case "tinyblob", "blob", "mediumblob", "longblob":
+		case "tinyblob", "blob", "mediumblob", "longblob", "binary", "varbinary":
 			newTable.destType = "bytea"
 		// 其余类型，源库使用什么类型，目标库就使用什么类型
 		default:

@@ -432,7 +432,7 @@ func runMigration(logDir string, startPage int, tableName string, sqlStr string,
 			if colValue == nil {
 				value = nil //空值判断
 			} else {
-				if colType[i] == "BLOB" { //大字段类型就无需使用string函数转为字符串类型，即使用sql.RawBytes类型
+				if colType[i] == "BLOB" || colType[i] == "BINARY" || colType[i] == "VARBINARY" { //大字段类型就无需使用string函数转为字符串类型，即使用sql.RawBytes类型
 					value = colValue
 				} else if colType[i] == "GEOMETRY" { //gis类型的数据处理
 					value = hex.EncodeToString(colValue)[8:] //golang把gis类型列数据转成16进制字符串后，会在开头多出来8个0，所以下面进行截取，从第9位开始获取数据

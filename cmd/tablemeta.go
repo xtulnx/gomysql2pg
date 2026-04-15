@@ -3,6 +3,8 @@ package cmd
 import (
 	"fmt"
 	"github.com/spf13/viper"
+	"regexp"
+
 	"strconv"
 	"strings"
 	"time"
@@ -301,24 +303,25 @@ func (tb *Table) ViewCreate(logDir string) (result []string) {
 	failedCount := 0
 	startTime := time.Now()
 	id := 0
-	var viewName string
-	// 查询视图并拼接生成目标数据库创建视图的SQL
-	sql := fmt.Sprintf("select table_name,concat('create or replace view ',table_name,' as ',  replace(replace(replace(replace(VIEW_DEFINITION,'`',''),concat(table_schema,'.'),''),'convert(',''),'using utf8mb4)','')  ,';') create_view_sql from information_schema.VIEWS where TABLE_SCHEMA=database();")
+	// 查询视图，获取视图名和经过基础清理（去反引号、schema前缀、convert/utf8mb4）的视图定义
+	sql := fmt.Sprintf("select table_name, replace(replace(replace(replace(VIEW_DEFINITION,'`',''),concat(table_schema,'.'),''),'convert(',''),'using utf8mb4)','') as view_def from information_schema.VIEWS where TABLE_SCHEMA=database();")
 	rows, err := srcDb.Query(sql)
 	if err != nil {
 		log.Error(err)
 	}
 	// 从sql结果集遍历，获取到创建语句
+	var viewName, rawDef string
 	for rows.Next() {
 		id += 1
-		if err := rows.Scan(&viewName, &tb.viewSql); err != nil {
+		if err := rows.Scan(&viewName, &rawDef); err != nil {
 			log.Error(err)
 		}
+		// 将MySQL视图定义改写为PostgreSQL兼容语法
+		tb.viewSql = "create or replace view " + viewName + " as " + transformViewDef(rawDef) + ";"
 		// 创建目标视图
 		log.Info(fmt.Sprintf("%v ProcessingID %s create view %s", time.Now().Format("2006-01-02 15:04:05.000000"), strconv.Itoa(id), viewName))
 		if _, err = destDb.Exec(tb.viewSql); err != nil {
 			log.Error("view ", viewName, " create view failed ", err)
-			//err = nil
 			LogError(logDir, "viewCreateFailed", tb.viewSql, err)
 			failedCount += 1
 		}
@@ -330,8 +333,54 @@ func (tb *Table) ViewCreate(logDir string) (result []string) {
 	return result
 }
 
+// transformViewDef 将 MySQL 视图定义（经过反引号/schema前缀/convert初步清理后）
+// 改写为 PostgreSQL 兼容的 SELECT 语句体。
+func transformViewDef(def string) string {
+	// 1. FROM (t1 join t2) WHERE  →  FROM t1, t2 WHERE
+	// MySQL 允许在 FROM 子句中用括号包裹不带 ON/USING 的 JOIN 列表，PostgreSQL 不支持。
+	// 用 [^()]+ 匹配内部（无嵌套括号），以区分子查询（子查询内部必然有 SELECT）。
+	reFromParen := regexp.MustCompile(`(?i)\bFROM\s*\(([^()]+)\)\s*(WHERE\b)`)
+	def = reFromParen.ReplaceAllStringFunc(def, func(match string) string {
+		sub := reFromParen.FindStringSubmatch(match)
+		if len(sub) < 3 {
+			return match
+		}
+		inner, whereKw := sub[1], sub[2]
+		reJoin := regexp.MustCompile(`(?i)\s+join\s+`)
+		tables := reJoin.Split(strings.TrimSpace(inner), -1)
+		for i, t := range tables {
+			tables[i] = strings.TrimSpace(t)
+		}
+		return "FROM " + strings.Join(tables, ", ") + " " + whereKw
+	})
+
+	// 2. ifnull(x, y) → coalesce(x, y)
+	def = regexp.MustCompile(`(?i)\bifnull\s*\(`).ReplaceAllString(def, "coalesce(")
+
+	// 3. isnull(x) → (x IS NULL)
+	def = regexp.MustCompile(`(?i)\bisnull\s*\(([^)]+)\)`).ReplaceAllString(def, "($1 IS NULL)")
+
+	// 4. group_concat(x separator 'sep') → string_agg(x, 'sep')
+	def = regexp.MustCompile(`(?i)\bgroup_concat\s*\((.+?)\s+separator\s+('[^']*')\s*\)`).ReplaceAllString(def, "string_agg($1, $2)")
+	def = regexp.MustCompile(`(?i)\bgroup_concat\s*\(`).ReplaceAllString(def, "string_agg(")
+
+	// 5. date_format(x, fmt) → to_char(x, fmt)，并替换常见格式符
+	def = regexp.MustCompile(`(?i)\bdate_format\s*\(`).ReplaceAllString(def, "to_char(")
+	def = strings.ReplaceAll(def, "%Y", "YYYY")
+	def = strings.ReplaceAll(def, "%m", "MM")
+	def = strings.ReplaceAll(def, "%d", "DD")
+	def = strings.ReplaceAll(def, "%H", "HH24")
+	def = strings.ReplaceAll(def, "%i", "MI")
+	def = strings.ReplaceAll(def, "%s", "SS")
+
+	// 6. if(cond, a, b) → CASE WHEN cond THEN a ELSE b END
+	def = regexp.MustCompile(`(?i)\bif\s*\(([^,]+),\s*([^,]+),\s*([^)]+)\)`).ReplaceAllString(def, "CASE WHEN $1 THEN $2 ELSE $3 END")
+
+	return def
+}
 func (tb *Table) TriggerCreate(logDir string) (result []string) {
 	id := 0
+func (tb *Table) TriggerCreate(logDir string) (result []string) {	id := 0
 	failedCount := 0
 	startTime := time.Now()
 	var createSql string

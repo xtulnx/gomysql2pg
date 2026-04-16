@@ -317,7 +317,13 @@ func (tb *Table) ViewCreate(logDir string) (result []string) {
 			log.Error(err)
 		}
 		// 将MySQL视图定义改写为PostgreSQL兼容语法
-		tb.viewSql = "create or replace view " + viewName + " as " + transformViewDef(rawDef) + ";"
+		transformed := transformViewDef(rawDef)
+		// view_portal_myitem 中 DISABLED 列为字符串类型，PostgreSQL 不做隐式类型转换
+		if viewName == "view_portal_myitem" {
+			transformed = regexp.MustCompile(`(?i)\(portal_item\.DISABLED\s*=\s*0\)`).
+				ReplaceAllString(transformed, "(portal_item.DISABLED = '0')")
+		}
+		tb.viewSql = "create or replace view " + viewName + " as " + transformed + ";"
 		// 创建目标视图
 		log.Info(fmt.Sprintf("%v ProcessingID %s create view %s", time.Now().Format("2006-01-02 15:04:05.000000"), strconv.Itoa(id), viewName))
 		if _, err = destDb.Exec(tb.viewSql); err != nil {

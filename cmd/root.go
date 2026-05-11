@@ -191,9 +191,41 @@ func mysql2pg(connStr *connect.DbConnStr) {
 		fmt.Println("Create tblConfig failed: ", err.Error())
 		return
 	}
-	ymlConfig := []string{connStr.SrcHost + "-" + connStr.SrcDatabase, connStr.DestHost + "-" + connStr.DestDatabase, strconv.Itoa(maxParallel), strconv.Itoa(pageSize), strconv.Itoa(len(excludeTab))}
+	ymlConfig := []string{connStr.SrcHost + "-" + connStr.SrcDatabase, connStr.DestHost + "-" + "dbName:" + connStr.DestDatabase + " userName:" + connStr.DestUserName, strconv.Itoa(maxParallel), strconv.Itoa(pageSize), strconv.Itoa(len(excludeTab))}
 	tblConfig.AddRow(ymlConfig)
 	fmt.Println(tblConfig)
+	// 输出源库/目标库对象数对比
+	srcTables := countDbObjects(srcDb,
+		"SELECT count(*) FROM information_schema.tables WHERE table_schema = database() AND table_type = 'BASE TABLE'")
+	destTables := countDbObjects(destDb,
+		"SELECT count(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'")
+	if selFromYml {
+		tblObj, err := gotable.Create("SrcTable", "DestTable")
+		if err != nil {
+			fmt.Println("Create tblObj failed: ", err.Error())
+			return
+		}
+		_ = tblObj.AddRow([]string{strconv.Itoa(srcTables), strconv.Itoa(destTables)})
+		fmt.Println(tblObj)
+		log.Info(fmt.Sprintf("SrcTable:%d DestTable:%d", srcTables, destTables))
+	} else {
+		srcViews := countDbObjects(srcDb,
+			"SELECT count(*) FROM information_schema.views WHERE table_schema = database()")
+		destViews := countDbObjects(destDb,
+			"SELECT count(*) FROM information_schema.views WHERE table_schema = current_schema()")
+		tblObj, err := gotable.Create("SrcTable", "DestTable", "SrcView", "DestView")
+		if err != nil {
+			fmt.Println("Create tblObj failed: ", err.Error())
+			return
+		}
+		_ = tblObj.AddRow([]string{
+			strconv.Itoa(srcTables), strconv.Itoa(destTables),
+			strconv.Itoa(srcViews), strconv.Itoa(destViews),
+		})
+		fmt.Println(tblObj)
+		log.Info(fmt.Sprintf("SrcTable:%d DestTable:%d SrcView:%d DestView:%d",
+			srcTables, destTables, srcViews, destViews))
+	}
 	// 输出迁移摘要
 	table, err := gotable.Create("Object", "BeginTime", "EndTime", "FailedTotal", "ElapsedTime")
 	if err != nil {
@@ -288,6 +320,16 @@ func fetchTableMap(pageSize int, excludeTable []string) (tableMap map[string][]s
 	// 等待所有的任务完成
 	wg.Wait()
 	return tableMap
+}
+
+// countDbObjects 执行一条返回单个整型计数的 SQL，失败时记录日志并返回 -1
+func countDbObjects(db *sql.DB, query string) int {
+	var n int
+	if err := db.QueryRow(query).Scan(&n); err != nil {
+		log.Warn("count query failed: ", err)
+		return -1
+	}
+	return n
 }
 
 // 迁移数据前先清空目标表数据，并获取每个表查询语句的列名以及列字段类型,表如果不存在返回布尔值true

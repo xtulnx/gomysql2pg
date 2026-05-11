@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"github.com/lib/pq"
-	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -70,14 +69,15 @@ func mysql2pg(connStr *connect.DbConnStr) {
 	if err != nil {
 		log.Fatal(err)
 	}
+	restore := TeeStdoutToFile(f)
 	defer func() {
+		restore()
 		if err := f.Close(); err != nil {
-			log.Fatal(err) // 或设置到函数返回值中
+			log.Fatal(err)
 		}
 	}()
-	// log信息重定向到平面文件
-	multiWriter := io.MultiWriter(os.Stdout, f)
-	log.SetOutput(multiWriter)
+	// log信息以及所有终端输出都通过管道镜像到 run.log
+	log.SetOutput(os.Stdout)
 	start := time.Now()
 	// map结构，表名以及该表用来迁移查询源库的语句
 	var tableMap map[string][]string

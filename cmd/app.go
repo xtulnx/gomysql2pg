@@ -8,6 +8,7 @@ import (
 	_ "gitee.com/opengauss/openGauss-connector-go-pq"
 	"github.com/spf13/viper"
 	"gomysql2pg/connect"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -215,9 +216,18 @@ func exitHandle(exitChan chan os.Signal) {
 
 }
 
-// CreateDateDir 根据当前日期来创建文件夹
+// CreateDateDir 根据当前日期以及源/目标库标识来创建文件夹
 func CreateDateDir(basePath string) string {
-	folderName := "log/" + time.Now().Format("2006_01_02_15_04_05")
+	ts := time.Now().Format("2006_01_02_15_04_05")
+	srcTag := sanitizeForPath(
+		viper.GetString("src.host") + "_" +
+			viper.GetString("src.database") + "_" +
+			viper.GetString("src.username"))
+	destTag := sanitizeForPath(
+		viper.GetString("dest.host") + "_" +
+			viper.GetString("dest.database") + "_" +
+			viper.GetString("dest.username"))
+	folderName := fmt.Sprintf("log/%s__%s__to__%s", ts, srcTag, destTag)
 	folderPath := filepath.Join(basePath, folderName)
 	if _, err := os.Stat(folderPath); os.IsNotExist(err) {
 		// 必须分成两步
@@ -233,4 +243,36 @@ func CreateDateDir(basePath string) string {
 		}
 	}
 	return folderPath
+}
+
+func sanitizeForPath(s string) string {
+	r := strings.NewReplacer("/", "-", "\\", "-", " ", "-", ":", "-")
+	return r.Replace(s)
+}
+
+// TeeStdoutToFile 将后续所有写到 os.Stdout/os.Stderr 的内容同时镜像到 f
+// 返回 restore，调用方应在程序退出前 defer 执行以恢复 fd 并冲刷管道
+func TeeStdoutToFile(f *os.File) (restore func()) {
+	origStdout := os.Stdout
+	origStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		return func() {}
+	}
+	os.Stdout = w
+	os.Stderr = w
+
+	done := make(chan struct{})
+	go func() {
+		mw := io.MultiWriter(origStdout, f)
+		_, _ = io.Copy(mw, r)
+		close(done)
+	}()
+
+	return func() {
+		_ = w.Close()
+		<-done
+		os.Stdout = origStdout
+		os.Stderr = origStderr
+	}
 }

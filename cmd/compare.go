@@ -5,7 +5,6 @@ import (
 	"github.com/liushuochen/gotable"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -46,14 +45,15 @@ var compareDbCmd = &cobra.Command{
 		if err != nil {
 			log.Fatal(err)
 		}
+		restore := TeeStdoutToFile(f)
 		defer func() {
+			restore()
 			if err := f.Close(); err != nil {
-				log.Fatal(err) // 或设置到函数返回值中
+				log.Fatal(err)
 			}
 		}()
-		// log信息重定向到平面文件
-		multiWriter := io.MultiWriter(os.Stdout, f)
-		log.SetOutput(multiWriter)
+		// log信息以及所有终端输出都通过管道镜像到 run.log
+		log.SetOutput(os.Stdout)
 		// 以下开始调用比对表行数的方法
 		start := time.Now()
 		// 用于控制协程goroutine运行时候的并发数,例如3个一批，3个一批的goroutine并发运行

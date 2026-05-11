@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"github.com/liushuochen/gotable"
 	"github.com/spf13/viper"
-	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -50,14 +49,15 @@ var createTableCmd = &cobra.Command{
 		if err != nil {
 			log.Fatal(err)
 		}
+		restore := TeeStdoutToFile(f)
 		defer func() {
+			restore()
 			if err := f.Close(); err != nil {
-				log.Fatal(err) // 或设置到函数返回值中
+				log.Fatal(err)
 			}
 		}()
-		// log信息重定向到平面文件
-		multiWriter := io.MultiWriter(os.Stdout, f)
-		log.SetOutput(multiWriter)
+		// log信息以及所有终端输出都通过管道镜像到 run.log
+		log.SetOutput(os.Stdout)
 		// 实例初始化，调用接口中创建目标表的方法
 		var db Database
 		start := time.Now()
@@ -97,14 +97,15 @@ var seqOnlyCmd = &cobra.Command{
 		if err != nil {
 			log.Fatal(err)
 		}
+		restore := TeeStdoutToFile(f)
 		defer func() {
+			restore()
 			if err := f.Close(); err != nil {
-				log.Fatal(err) // 或设置到函数返回值中
+				log.Fatal(err)
 			}
 		}()
-		// log信息重定向到平面文件
-		multiWriter := io.MultiWriter(os.Stdout, f)
-		log.SetOutput(multiWriter)
+		// log信息以及所有终端输出都通过管道镜像到 run.log
+		log.SetOutput(os.Stdout)
 		// 实例初始化，调用接口中创建目标表的方法
 		var db Database
 		db = new(Table)
@@ -129,14 +130,15 @@ var idxOnlyCmd = &cobra.Command{
 		if err != nil {
 			log.Fatal(err)
 		}
+		restore := TeeStdoutToFile(f)
 		defer func() {
+			restore()
 			if err := f.Close(); err != nil {
-				log.Fatal(err) // 或设置到函数返回值中
+				log.Fatal(err)
 			}
 		}()
-		// log信息重定向到平面文件
-		multiWriter := io.MultiWriter(os.Stdout, f)
-		log.SetOutput(multiWriter)
+		// log信息以及所有终端输出都通过管道镜像到 run.log
+		log.SetOutput(os.Stdout)
 		// 实例初始化，调用接口中创建目标表的方法
 		var db Database
 		db = new(Table)
@@ -159,14 +161,15 @@ var viewOnlyCmd = &cobra.Command{
 		if err != nil {
 			log.Fatal(err)
 		}
+		restore := TeeStdoutToFile(f)
 		defer func() {
+			restore()
 			if err := f.Close(); err != nil {
-				log.Fatal(err) // 或设置到函数返回值中
+				log.Fatal(err)
 			}
 		}()
-		// log信息重定向到平面文件
-		multiWriter := io.MultiWriter(os.Stdout, f)
-		log.SetOutput(multiWriter)
+		// log信息以及所有终端输出都通过管道镜像到 run.log
+		log.SetOutput(os.Stdout)
 		// 实例初始化，调用接口中创建目标表的方法
 		var db Database
 		db = new(Table)
@@ -201,14 +204,15 @@ var onlyDataCmd = &cobra.Command{
 		if err != nil {
 			log.Fatal(err)
 		}
+		restore := TeeStdoutToFile(f)
 		defer func() {
+			restore()
 			if err := f.Close(); err != nil {
-				log.Fatal(err) // 或设置到函数返回值中
+				log.Fatal(err)
 			}
 		}()
-		// log信息重定向到平面文件
-		multiWriter := io.MultiWriter(os.Stdout, f)
-		log.SetOutput(multiWriter)
+		// log信息以及所有终端输出都通过管道镜像到 run.log
+		log.SetOutput(os.Stdout)
 		// 创建表之后，开始准备迁移表行数据
 		// 同时执行goroutine的数量，这里是每个表查询语句切片集合的长度
 		var goroutineSize int

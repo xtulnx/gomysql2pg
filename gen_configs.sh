@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 从 configs/db_config.csv 读取每行连接信息，生成对应的 yml 配置文件。
 # 用法: bash gen_configs.sh [csv_file] [out_dir]
+# 注意: 请使用 bash 调用 (脚本依赖 [[ ]]、${var%$'\r'} 等扩展)，避免 sh 模式下兼容问题。
 
 set -euo pipefail
 
@@ -16,6 +17,27 @@ if [[ ! -f "$CSV" ]]; then
     exit 2
 fi
 mkdir -p "$OUT_DIR"
+
+dup_out=$(awk -F, '
+    NR == 1 { next }
+    {
+        line = $0
+        sub(/\r$/, "", line)
+        if (line == "") next
+        if (line in seen) {
+            printf "duplicate row detected: line %d duplicates line %d\n", NR, seen[line]
+            printf "  content: %s\n", line
+            dup = 1
+        } else {
+            seen[line] = NR
+        }
+    }
+    END { exit (dup ? 1 : 0) }
+' "$CSV") || {
+    printf '%s\n' "$dup_out" >&2
+    echo "aborted: please fix duplicate rows in $CSV" >&2
+    exit 3
+}
 
 idx=0
 gen=0

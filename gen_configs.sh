@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# 从 configs/db_config.csv 读取每行连接信息，生成对应的 yml 配置文件。
+# 用法: bash gen_configs.sh [csv_file] [out_dir]
+
+set -euo pipefail
+
+CSV="${1:-configs/db_config.csv}"
+OUT_DIR="${2:-configs}"
+
+DB_TYPE="Gauss"
+PAGE_SIZE=100000
+MAX_PARALLEL=32
+
+if [[ ! -f "$CSV" ]]; then
+    echo "csv not found: $CSV" >&2
+    exit 2
+fi
+mkdir -p "$OUT_DIR"
+
+idx=0
+gen=0
+while IFS=',' read -r s_host s_port s_db s_user s_pwd d_host d_port d_db d_user d_pwd || [[ -n "${s_host:-}" ]]; do
+    s_host=${s_host%$'\r'}
+    s_port=${s_port%$'\r'}
+    s_db=${s_db%$'\r'}
+    s_user=${s_user%$'\r'}
+    s_pwd=${s_pwd%$'\r'}
+    d_host=${d_host%$'\r'}
+    d_port=${d_port%$'\r'}
+    d_db=${d_db%$'\r'}
+    d_user=${d_user%$'\r'}
+    d_pwd=${d_pwd%$'\r'}
+
+    idx=$((idx + 1))
+    [[ $idx -eq 1 ]] && continue
+    [[ -z "$s_host" ]] && continue
+    if [[ -z "$d_pwd" ]]; then
+        echo "warn: line $idx incomplete, skip" >&2
+        continue
+    fi
+
+    seq=$(printf "%03d" $((idx - 1)))
+    out="$OUT_DIR/${seq}_${s_db}.yml"
+    cat >"$out" <<EOF
+src:
+  host: "$s_host"
+  port: $s_port
+  database: "$s_db"
+  username: "$s_user"
+  password: "$s_pwd"
+
+dest:
+  dbType: $DB_TYPE
+  host: $d_host
+  port: $d_port
+  database: $d_db
+  username: $d_user
+  password: $d_pwd
+
+pageSize: $PAGE_SIZE
+maxParallel: $MAX_PARALLEL
+charInLength: false
+useNvarchar2: true
+Distributed: false
+tables:
+  pres_fieldinfo:
+    - select * from pres_fieldinfo
+exclude:
+  - 'xmllog_copy1'
+  - 'interfacecalllog_copy1'
+  - '*_cswysk'
+EOF
+    gen=$((gen + 1))
+done < "$CSV"
+
+echo "generated $gen yml file(s) under $OUT_DIR"

@@ -45,6 +45,21 @@ func TestTransformViewDef(t *testing.T) {
 			input: "select date_format(d,'%Y-%m-%d') from t",
 			want:  "select to_char(d,'YYYY-MM-DD') from t",
 		},
+		{
+			name:  "cast with charset clause — strip charset",
+			input: "select cast('' as char(32) charset utf8mb4) as x from t",
+			want:  "select cast('' as char(32)) as x from t",
+		},
+		{
+			name:  "cast with charset uppercase",
+			input: "select CAST(a AS CHAR(64) CHARSET utf8) from t",
+			want:  "select CAST(a AS CHAR(64)) from t",
+		},
+		{
+			name:  "cast with charset and no length",
+			input: "select cast(a as char charset utf8mb4) from t",
+			want:  "select cast(a as char) from t",
+		},
 	}
 
 	for _, tc := range tests {

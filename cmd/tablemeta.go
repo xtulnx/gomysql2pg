@@ -647,6 +647,10 @@ func transformViewDef(def string) string {
 	// 6. if(cond, a, b) → CASE WHEN cond THEN a ELSE b END
 	def = regexp.MustCompile(`(?i)\bif\s*\(([^,]+),\s*([^,]+),\s*([^)]+)\)`).ReplaceAllString(def, "CASE WHEN $1 THEN $2 ELSE $3 END")
 
+	// 7. 剥离 MySQL 特有的 CHARSET 子句（出现在 CAST / 类型声明中）
+	//    cast('' as char(32) charset utf8mb4) → cast('' as char(32))
+	def = regexp.MustCompile(`(?i)\s+charset\s+\w+`).ReplaceAllString(def, "")
+
 	return def
 }
 func (tb *Table) TriggerCreate(logDir string) (result []string) {

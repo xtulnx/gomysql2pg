@@ -63,6 +63,29 @@ while IFS=',' read -r s_host s_port s_db s_user s_pwd d_host d_port d_db d_user 
 
     seq=$(printf "%03d" $((idx - 1)))
     out="$OUT_DIR/${seq}_${s_db}.yml"
+
+    # 交互式询问是否配置 schemaMapping（使用平行索引数组以兼容 bash 3.2）
+    schema_keys=()
+    schema_vals=()
+    read -r -p "Enable schemaMapping for ${s_db}? [y/N]: " enable_mapping </dev/tty
+    enable_mapping=$(echo "$enable_mapping" | tr '[:upper:]' '[:lower:]')
+
+    if [[ "$enable_mapping" == "y" || "$enable_mapping" == "yes" ]]; then
+        echo "  Enter schema mappings (source -> target). Press Enter on empty source to finish."
+        while true; do
+            read -r -p "  Source schema (empty to finish) [$s_db]: " src_schema </dev/tty
+            src_schema=${src_schema:-$s_db}
+            [[ -z "$src_schema" ]] && break
+
+            read -r -p "  Target schema (empty string to remove prefix) [$d_user]: " tgt_schema </dev/tty
+            tgt_schema=${tgt_schema:-$d_user}
+
+            schema_keys+=("$src_schema")
+            schema_vals+=("$tgt_schema")
+            echo "    Added: $src_schema -> $tgt_schema"
+        done
+    fi
+
     cat >"$out" <<EOF
 src:
   host: "$s_host"
@@ -91,12 +114,24 @@ exclude:
   - 'xmllog_copy1'
   - 'interfacecalllog_copy1'
   - '*_cswysk'
-# 视图定义中跨 schema 引用的映射规则（可选）
-# key   = MySQL 中的源 schema 名（小写）
-# value = PostgreSQL 中的目标 schema 名；为空字符串则删除该前缀
-schemaMapping:
-  $s_db: $d_user
 EOF
+
+    # 动态写入 schemaMapping（如果有）
+    if [[ ${#schema_keys[@]} -gt 0 ]]; then
+        echo "schemaMapping:" >>"$out"
+        i=0
+        while [[ $i -lt ${#schema_keys[@]} ]]; do
+            src="${schema_keys[$i]}"
+            tgt="${schema_vals[$i]}"
+            if [[ -z "$tgt" ]]; then
+                echo "  $src: \"\"" >>"$out"
+            else
+                echo "  $src: $tgt" >>"$out"
+            fi
+            i=$((i + 1))
+        done
+    fi
+
     gen=$((gen + 1))
 done < "$CSV"
 

@@ -108,7 +108,42 @@ on Linux and MacOS you can run
 ./gomysql2pg --config example.yml
 ```
 
-### 3 View Migration Summary
+### 3 Batch migration (multiple databases in one run)
+
+Use case: migrate several databases / source-destination pairs in a single run. Two scripts at the repo root provide identical behavior: `run_batch.sh` for Linux / macOS and `run_batch.ps1` for Windows.
+
+**Preparation**
+
+Place one yml per database under `configs/`. Use a numeric prefix (e.g. `01_a.yml`, `02_b.yml`) to control execution order. You can also generate them in bulk from `configs/db_config.csv` via `gen_configs.sh`:
+
+```bash
+bash gen_configs.sh                       # default: configs/db_config.csv -> configs/
+bash gen_configs.sh my.csv out_dir        # custom csv and output dir
+```
+
+**Linux / macOS: `run_batch.sh`**
+
+```bash
+bash run_batch.sh                  # default: ./configs
+bash run_batch.sh path/to/cfg_dir  # custom directory
+```
+
+**Windows: `run_batch.ps1`** (PowerShell 5.1+, built into Windows; keep the script next to `gomysql2pg.exe`)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\run_batch.ps1
+powershell -ExecutionPolicy Bypass -File .\run_batch.ps1 -ConfigDir my_cfgs
+```
+
+**Script behavior**
+
+1. Print a preview: `[i] file | src=host:port/db -> dest=user@host:port/db`.
+2. Wait for the user to enter `yes` before running; any other input aborts (exit code 1).
+3. Run `gomysql2pg --config <file>` sequentially; a single failure does NOT abort the rest.
+4. All output is teed to the screen and to a batch log `batch-YYYYMMDD-HHMMSS.log`.
+5. Print a final success / failed summary. **The exit code equals the number of failed configs** (0 on full success).
+
+### 4 View Migration Summary
 
 After the entire database migration is completed, a migration summary will be generated to observe if there are any failed objects. By querying the migration log, the failed objects can be analyzed
 
@@ -135,7 +170,7 @@ time="2023-07-11T12:34:01+08:00" level=info msg="All complete totalTime 10m30.16
 
 ```
 
-### 4 Compare Source and Target database
+### 5 Compare Source and Target database
 
 After migration finish you can compare source table and target database table rows,displayed failed table only
 

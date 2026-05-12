@@ -124,7 +124,42 @@ gomysql2pg.exe --config example.yml
 ./gomysql2pg --config example.yml
 ```
 
-### 2.3 查看迁移摘要
+### 2.3 批量迁移（多库一次执行）
+
+适用场景：一次迁移多个库 / 多对源-目标。仓库根目录提供两份脚本：`run_batch.sh`（Linux / macOS）和 `run_batch.ps1`（Windows），二者行为、提示、日志格式、退出码完全一致。
+
+**准备**
+
+在 `configs/` 目录放多份 yml（每库一份），文件名建议带数字前缀（如 `01_a.yml`、`02_b.yml`）以控制执行顺序。也可使用 `gen_configs.sh` 从 `configs/db_config.csv` 批量生成：
+
+```bash
+bash gen_configs.sh                       # 默认读取 configs/db_config.csv，输出到 configs/
+bash gen_configs.sh my.csv out_dir        # 指定 csv 和输出目录
+```
+
+**Linux / macOS：`run_batch.sh`**
+
+```bash
+bash run_batch.sh                  # 默认读取 ./configs
+bash run_batch.sh path/to/cfg_dir  # 指定其它目录
+```
+
+**Windows：`run_batch.ps1`**（PowerShell 5.1+，系统自带；脚本须与 `gomysql2pg.exe` 在同一目录）
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\run_batch.ps1
+powershell -ExecutionPolicy Bypass -File .\run_batch.ps1 -ConfigDir my_cfgs
+```
+
+**脚本行为**
+
+1. 先列出预览：`[i] file | src=host:port/db -> dest=user@host:port/db`；
+2. 等待用户输入 `yes` 才开始执行，输入其它内容则放弃并退出（退出码 1）；
+3. 顺序逐个调用 `gomysql2pg --config <file>`，单条失败不中断后续；
+4. 全程输出同时打到屏幕和批次日志 `batch-YYYYMMDD-HHMMSS.log`；
+5. 全部结束后打印 success / failed 列表，**退出码等于失败条数**（全部成功为 0）。
+
+### 2.4 查看迁移摘要
 
 全库迁移完成之后会生成迁移摘要，观察下是否有失败的对象，通过查询迁移日志可对迁移失败的对象进行分析
 

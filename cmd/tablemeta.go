@@ -544,44 +544,55 @@ func buildFromClause(parts []joinPart) string {
 }
 
 // rewriteFromParen handles MySQL's nested parenthesized FROM … JOIN syntax,
-// converting it to PostgreSQL-compatible JOIN expressions.
+// converting it to PostgreSQL-compatible JOIN expressions. It scans every
+// `FROM (` in the statement; a FROM whose inner group begins with SELECT is
+// treated as a pure subquery and skipped, while mixed forms like
+// `FROM (t a JOIN (SELECT …) b)` are rewritten (the subquery operand is
+// preserved verbatim by splitTopLevelJoin/buildFromClause).
 func rewriteFromParen(def string) string {
 	reFindFrom := regexp.MustCompile(`(?i)\bFROM\s*\(`)
-	loc := reFindFrom.FindStringIndex(def)
-	if loc == nil {
-		return def
-	}
-	openIdx := loc[1] - 1 // index of the '('
-	depth := 0
-	closeIdx := -1
-	for i := openIdx; i < len(def); i++ {
-		switch def[i] {
-		case '(':
-			depth++
-		case ')':
-			depth--
-			if depth == 0 {
-				closeIdx = i
+	reStartsWithSelect := regexp.MustCompile(`(?i)^SELECT\b`)
+	pos := 0
+	for pos < len(def) {
+		loc := reFindFrom.FindStringIndex(def[pos:])
+		if loc == nil {
+			return def
+		}
+		absFromStart := pos + loc[0]
+		openIdx := pos + loc[1] - 1 // index of the '('
+		depth := 0
+		closeIdx := -1
+		for i := openIdx; i < len(def); i++ {
+			switch def[i] {
+			case '(':
+				depth++
+			case ')':
+				depth--
+				if depth == 0 {
+					closeIdx = i
+				}
+			}
+			if closeIdx >= 0 {
+				break
 			}
 		}
-		if closeIdx >= 0 {
-			break
+		if closeIdx < 0 {
+			return def // unbalanced — bail out safely
 		}
+		inner := def[openIdx+1 : closeIdx]
+		trimmed := strings.TrimSpace(fullyStripOuterParens(inner))
+		if reStartsWithSelect.MatchString(trimmed) {
+			pos = closeIdx + 1 // pure subquery — skip past the close paren
+			continue
+		}
+		parts := splitTopLevelJoin(trimmed)
+		rewritten := buildFromClause(parts)
+		before := def[:absFromStart]
+		after := def[closeIdx+1:]
+		def = before + "FROM " + rewritten + after
+		pos = absFromStart // resume scanning from the rewritten position
 	}
-	if closeIdx < 0 {
-		return def // unbalanced — bail out safely
-	}
-	inner := def[openIdx+1 : closeIdx]
-	// Guard: if inner contains SELECT it's a subquery, leave unchanged
-	if regexp.MustCompile(`(?i)\bSELECT\b`).MatchString(inner) {
-		return def
-	}
-	stripped := fullyStripOuterParens(inner)
-	parts := splitTopLevelJoin(stripped)
-	rewritten := buildFromClause(parts)
-	before := def[:loc[0]]    // text before FROM keyword
-	after := def[closeIdx+1:] // text after the closing ')'
-	return before + "FROM " + rewritten + after
+	return def
 }
 
 // applySchemaMapping 将视图定义中跨 schema 的表前缀按 mapping 替换。

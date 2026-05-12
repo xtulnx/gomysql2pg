@@ -60,6 +60,21 @@ func TestTransformViewDef(t *testing.T) {
 			input: "select cast(a as char charset utf8mb4) from t",
 			want:  "select cast(a as char) from t",
 		},
+		{
+			name:  "join with subquery operand — rewrite outer, preserve subquery body",
+			input: "select e.x, d.y from (t1 e join (select 1 as id from t0) d) where (e.id = d.id)",
+			want:  "select e.x, d.y FROM t1 e CROSS JOIN (select 1 as id from t0) d where (e.id = d.id)",
+		},
+		{
+			name:  "deeply nested left-associated joins",
+			input: "select * from (((bp_department d0 join bp_department d1) join bp_department d2) join bp_department d3) where (d1.parent_id=0)",
+			want:  "select * FROM bp_department d0 CROSS JOIN bp_department d1 CROSS JOIN bp_department d2 CROSS JOIN bp_department d3 where (d1.parent_id=0)",
+		},
+		{
+			name:  "multiple FROM ( — UNION subquery body also rewritten",
+			input: "select * from (a x join (select b.id from (b y join c z) where (b.x=1) union select c.id from ((b y join c z) join d w) where (b.x=2)) d)",
+			want:  "select * FROM a x CROSS JOIN (select b.id FROM b y CROSS JOIN c z where (b.x=1) union select c.id FROM b y CROSS JOIN c z CROSS JOIN d w where (b.x=2)) d",
+		},
 	}
 
 	for _, tc := range tests {

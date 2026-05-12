@@ -91,6 +91,11 @@ exclude:
   - 'xmllog_copy1'
   - 'interfacecalllog_copy1'
   - '*_cswysk'
+# 视图定义中跨 schema 引用的映射规则（可选）
+# key   = MySQL 中的源 schema 名（小写）
+# value = PostgreSQL 中的目标 schema 名；为空字符串则删除该前缀
+schemaMapping:
+  $s_db: $d_user
 EOF
     gen=$((gen + 1))
 done < "$CSV"

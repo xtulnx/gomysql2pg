@@ -303,6 +303,7 @@ func (tb *Table) ViewCreate(logDir string) (result []string) {
 	failedCount := 0
 	startTime := time.Now()
 	id := 0
+	schemaMappingCache := viper.GetStringMapString("schemaMapping")
 	// 查询视图，获取视图名和经过基础清理（去反引号、schema前缀、convert/utf8mb4）的视图定义
 	sql := fmt.Sprintf("select table_name, replace(replace(replace(replace(VIEW_DEFINITION,'`',''),concat(table_schema,'.'),''),'convert(',''),'using utf8mb4)','') as view_def from information_schema.VIEWS where TABLE_SCHEMA=database();")
 	rows, err := srcDb.Query(sql)
@@ -316,6 +317,8 @@ func (tb *Table) ViewCreate(logDir string) (result []string) {
 		if err := rows.Scan(&viewName, &rawDef); err != nil {
 			log.Error(err)
 		}
+		// 跨 schema 表前缀按配置映射替换（处理 MySQL 视图引用其他库的场景）
+		rawDef = applySchemaMapping(rawDef, schemaMappingCache)
 		// 将MySQL视图定义改写为PostgreSQL兼容语法
 		transformed := transformViewDef(rawDef)
 		// view_portal_myitem 中 DISABLED 列为字符串类型，PostgreSQL 不做隐式类型转换
@@ -579,6 +582,41 @@ func rewriteFromParen(def string) string {
 	before := def[:loc[0]]    // text before FROM keyword
 	after := def[closeIdx+1:] // text after the closing ')'
 	return before + "FROM " + rewritten + after
+}
+
+// applySchemaMapping 将视图定义中跨 schema 的表前缀按 mapping 替换。
+// mapping: key=源 schema（小写），value=目标 schema（空串表示删除前缀）。
+// 仅在 SQL 字符串字面量（单引号包裹）之外发生替换。
+func applySchemaMapping(def string, mapping map[string]string) string {
+	if len(mapping) == 0 {
+		return def
+	}
+	type rule struct {
+		re   *regexp.Regexp
+		repl string
+	}
+	rules := make([]rule, 0, len(mapping))
+	for src, dst := range mapping {
+		if src == "" || src == dst {
+			continue
+		}
+		// 左侧必须是行首或非词字符；右侧必须紧跟一个合法标识符。
+		pat := fmt.Sprintf(`(?i)(^|[^A-Za-z0-9_])%s\.([A-Za-z_][A-Za-z0-9_]*)`,
+			regexp.QuoteMeta(src))
+		repl := `${1}${2}`
+		if dst != "" {
+			repl = `${1}` + dst + `.${2}`
+		}
+		rules = append(rules, rule{regexp.MustCompile(pat), repl})
+	}
+	// 按单引号切分，奇数段是字面量，跳过不替换。
+	parts := strings.Split(def, "'")
+	for i := 0; i < len(parts); i += 2 {
+		for _, r := range rules {
+			parts[i] = r.re.ReplaceAllString(parts[i], r.repl)
+		}
+	}
+	return strings.Join(parts, "'")
 }
 
 // transformViewDef 将 MySQL 视图定义（经过反引号/schema前缀/convert初步清理后）

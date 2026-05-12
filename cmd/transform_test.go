@@ -92,3 +92,81 @@ func TestFullyStripOuterParens(t *testing.T) {
 		}
 	}
 }
+
+func TestApplySchemaMapping(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		mapping map[string]string
+		want    string
+	}{
+		{
+			name:    "删除前缀-基本场景",
+			input:   "select schema_b.t1.id from schema_b.t1 where schema_b.t1.x=1",
+			mapping: map[string]string{"schema_b": ""},
+			want:    "select t1.id from t1 where t1.x=1",
+		},
+		{
+			name:    "替换为目标 schema",
+			input:   "select legacy.t1.id from legacy.t1",
+			mapping: map[string]string{"legacy": "public"},
+			want:    "select public.t1.id from public.t1",
+		},
+		{
+			name:    "用户案例-完整视图",
+			input:   "select schema_b.agentdropstartivrcfg.ID AS ID from schema_b.agentdropstartivrcfg where (schema_b.agentdropstartivrcfg.TenantID = (select mytenantinfo.TenantID from mytenantinfo))",
+			mapping: map[string]string{"schema_b": ""},
+			want:    "select agentdropstartivrcfg.ID AS ID from agentdropstartivrcfg where (agentdropstartivrcfg.TenantID = (select mytenantinfo.TenantID from mytenantinfo))",
+		},
+		{
+			name:    "字符串字面量内不替换",
+			input:   "select 'schema_b.foo' as note, schema_b.t1.id from schema_b.t1",
+			mapping: map[string]string{"schema_b": ""},
+			want:    "select 'schema_b.foo' as note, t1.id from t1",
+		},
+		{
+			name:    "大小写不敏感匹配",
+			input:   "select Schema_B.T1.id from SCHEMA_B.t1",
+			mapping: map[string]string{"schema_b": ""},
+			want:    "select T1.id from t1",
+		},
+		{
+			name:    "未配置时不修改",
+			input:   "select schema_b.t1.id from schema_b.t1",
+			mapping: map[string]string{},
+			want:    "select schema_b.t1.id from schema_b.t1",
+		},
+		{
+			name:    "源等于目标-幂等",
+			input:   "select schema_b.t1.id from schema_b.t1",
+			mapping: map[string]string{"schema_b": "schema_b"},
+			want:    "select schema_b.t1.id from schema_b.t1",
+		},
+		{
+			name:    "前缀子串不误伤",
+			input:   "select myschema_b.t1.id from myschema_b.t1",
+			mapping: map[string]string{"schema_b": ""},
+			want:    "select myschema_b.t1.id from myschema_b.t1",
+		},
+		{
+			name:    "右侧非标识符不命中",
+			input:   "select schema_b.123 from t",
+			mapping: map[string]string{"schema_b": ""},
+			want:    "select schema_b.123 from t",
+		},
+		{
+			name:    "多 schema 同时映射",
+			input:   "select a.t1.x, b.t2.y from a.t1 join b.t2",
+			mapping: map[string]string{"a": "ns1", "b": ""},
+			want:    "select ns1.t1.x, t2.y from ns1.t1 join t2",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := applySchemaMapping(tc.input, tc.mapping)
+			if got != tc.want {
+				t.Errorf("\ninput: %s\n  got: %s\n want: %s", tc.input, got, tc.want)
+			}
+		})
+	}
+}

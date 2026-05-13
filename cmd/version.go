@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var ver = "0.2.9"
+var ver = "v0.2.9"
 
 func init() {
 	rootCmd.AddCommand(versionCmd)
@@ -20,7 +20,7 @@ var versionCmd = &cobra.Command{
 	Short: "Print the version number of gomysql2pg",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("\n\nyour version v" + ver)
+		fmt.Println(ver)
 		os.Exit(0)
 	},
 }

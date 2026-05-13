@@ -3,7 +3,7 @@
 //
 // Usage:
 //
-//	go run ./tools/xlsx2yml [-f configs/db_mig_info.xlsx] [-o configs] \
+//	go run ./tools/xlsx2yml [-f configs/example.xlsx] [-o configs] \
 //	    [--sheet NAME] [--schema-mapping] [--overwrite]
 package main
 
@@ -37,8 +37,8 @@ func main() {
 		enableMapping bool
 		overwrite     bool
 	)
-	flag.StringVar(&file, "file", "configs/db_mig_info.xlsx", "xlsx path")
-	flag.StringVar(&file, "f", "configs/db_mig_info.xlsx", "xlsx path (shorthand)")
+	flag.StringVar(&file, "file", "configs/example.xlsx", "xlsx path")
+	flag.StringVar(&file, "f", "configs/example.xlsx", "xlsx path (shorthand)")
 	flag.StringVar(&outDir, "out", "configs", "output dir")
 	flag.StringVar(&outDir, "o", "configs", "output dir (shorthand)")
 	flag.StringVar(&sheet, "sheet", "", "sheet name (default: first sheet)")

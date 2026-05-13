@@ -70,12 +70,20 @@ func mysql2pg(connStr *connect.DbConnStr) {
 		log.Fatal(err)
 	}
 	restore := TeeStdoutToFile(f)
-	defer func() {
-		restore()
-		if err := f.Close(); err != nil {
-			log.Fatal(err)
-		}
-	}()
+	// log.Fatal 直接调用 os.Exit，不会触发 defer。需要通过 logrus 的 ExitFunc
+	// 在退出前把管道里残留的日志刷到原 stdout 和 run.log，否则致命错误对用户不可见。
+	var cleanupOnce sync.Once
+	cleanup := func() {
+		cleanupOnce.Do(func() {
+			restore()
+			_ = f.Close()
+		})
+	}
+	log.ExitFunc = func(code int) {
+		cleanup()
+		os.Exit(code)
+	}
+	defer cleanup()
 	// log信息以及所有终端输出都通过管道镜像到 run.log
 	log.SetOutput(os.Stdout)
 	start := time.Now()
@@ -574,6 +582,10 @@ func init() {
 
 // initConfig reads in config file and ENV variables if set.
 func initConfig() {
+	if len(os.Args) > 1 && os.Args[1] == "version" {
+		return
+	}
+
 	if cfgFile != "" {
 		// Use config file from the flag.
 		viper.SetConfigFile(cfgFile)

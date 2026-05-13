@@ -121,6 +121,17 @@ bash gen_configs.sh                       # default: configs/db_config.csv -> co
 bash gen_configs.sh my.csv out_dir        # custom csv and output dir
 ```
 
+Or generate from an xlsx workbook using the Go tool under `tools/xlsx2yml`:
+
+```bash
+go run ./tools/xlsx2yml                              # reads configs/db_mig_info.xlsx -> configs/
+go run ./tools/xlsx2yml -f my.xlsx -o out_dir        # custom input/output
+go run ./tools/xlsx2yml --sheet Sheet2 --overwrite   # pick a sheet, overwrite existing yml
+go run ./tools/xlsx2yml --schema-mapping             # also emit schemaMapping: { src_db: dest_user }
+```
+
+Required header columns (first row, case-insensitive): `src_host`, `src_port`, `src_database`, `src_username`, `src_password`, `dest_host`, `dest_port`, `dest_database`, `dest_username`, `dest_password`. Output files are named `NNN_<src_database>.yml` in row order; existing files are skipped unless `--overwrite` is set; duplicate rows abort the run.
+
 **Linux / macOS: `run_batch.sh`**
 
 ```bash

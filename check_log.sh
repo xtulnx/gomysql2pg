@@ -16,6 +16,7 @@ FAIL_LOGS=(
     "TriggerCreateFailed.log"
     "failedTable.log"
     "errorTableData.log"
+    "dryRunFailed.log"
 )
 
 WARN_LOGS=(

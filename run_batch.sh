@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 # 顺序迁移 configs/ 下所有 yml，每对独立日志，单对失败不中断后续。
-# 用法: bash run_batch.sh [config_dir]
+# 用法: bash run_batch.sh [config_dir] [mode]
+#   mode: migrate (默认) | dryrun (仅做只读预检，不创建对象不迁移数据)
 
 CONFIG_DIR="${1:-configs}"
+MODE="${2:-migrate}"
 BINARY="./gomysql2pg"
 TS="$(date +%Y%m%d-%H%M%S)"
-BATCH_LOG="batch-${TS}.log"
+case "$MODE" in
+    migrate) BATCH_LOG="batch-${TS}.log" ;;
+    dryrun)  BATCH_LOG="batch-dryrun-${TS}.log" ;;
+    *) echo "unknown mode: $MODE (use 'migrate' or 'dryrun')" >&2; exit 2 ;;
+esac
 
 # 从 yml 中读取 section.key（section=src|dest，只支持二层缩进、无嵌套 map）
 yml_get() {
@@ -73,33 +79,49 @@ for f in "${files[@]}"; do
 done
 echo
 
-# 交互式确认
-read -r -p "Proceed with these ${#files[@]} migration(s)? [yes/no]: " answer
-answer=$(printf '%s' "$answer" | tr '[:upper:]' '[:lower:]')
-case "$answer" in
-    yes|y) ;;
-    *) echo "aborted by user"; exit 1 ;;
-esac
+# 交互式确认（dryrun 模式只读，无需确认）
+if [[ "$MODE" != "dryrun" ]]; then
+    read -r -p "Proceed with these ${#files[@]} migration(s)? [yes/no]: " answer
+    answer=$(printf '%s' "$answer" | tr '[:upper:]' '[:lower:]')
+    case "$answer" in
+        yes|y) ;;
+        *) echo "aborted by user"; exit 1 ;;
+    esac
+fi
 
 succ=()
 fail=()
+missing_schemas=()
 
 {
-    echo "=== batch start $(date '+%Y-%m-%d %H:%M:%S') total=${#files[@]} ==="
+    echo "=== batch start $(date '+%Y-%m-%d %H:%M:%S') mode=${MODE} total=${#files[@]} ==="
     for f in "${files[@]}"; do
         echo
         echo "============================================================"
         echo ">>> [$(date '+%H:%M:%S')] running: $f"
         echo "============================================================"
-        "$BINARY" --config "$f"
-        rc=$?
+        out=$(mktemp)
+        if [[ "$MODE" == "dryrun" ]]; then
+            "$BINARY" --config "$f" dryRun 2>&1 | tee "$out"
+            rc=${PIPESTATUS[0]}
+        else
+            "$BINARY" --config "$f" 2>&1 | tee "$out"
+            rc=${PIPESTATUS[0]}
+        fi
         if [[ $rc -eq 0 ]]; then
             echo "<<< [OK] $f"
             succ+=("$f")
         else
             echo "<<< [FAIL rc=$rc] $f"
             fail+=("$f")
+            if grep -q 'no schema named' "$out"; then
+                d_user=$(yml_get "$f" dest username)
+                if [[ -n "$d_user" ]]; then
+                    missing_schemas+=("$d_user")
+                fi
+            fi
         fi
+        rm -f "$out"
     done
 
     echo
@@ -108,6 +130,27 @@ fail=()
     for f in "${succ[@]}"; do echo "  OK   $f"; done
     echo "failed:  ${#fail[@]}"
     for f in "${fail[@]}"; do echo "  FAIL $f"; done
+
+    if [[ ${#missing_schemas[@]} -gt 0 ]]; then
+        declare -A seen=()
+        uniq=()
+        for u in "${missing_schemas[@]}"; do
+            if [[ -z "${seen[$u]:-}" ]]; then
+                seen[$u]=1
+                uniq+=("$u")
+            fi
+        done
+        echo
+        echo "=== missing same-name schema(s) detected ==="
+        echo "Run the following SQL on the destination database as a privileged user:"
+        echo
+        for u in "${uniq[@]}"; do
+            printf "create user %s with password '123456';\n" "$u"
+            printf "create schema %s authorization %s;\n" "$u" "$u"
+        done
+        echo
+        echo "(Replace '123456' with a real password before executing.)"
+    fi
 } 2>&1 | tee "$BATCH_LOG"
 
 exit ${#fail[@]}

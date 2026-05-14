@@ -151,8 +151,9 @@ go run ./tools/xlsx2yml --schema-mapping             # 同时生成 schemaMappin
 **Linux / macOS：`run_batch.sh`**
 
 ```bash
-bash run_batch.sh                  # 默认读取 ./configs
-bash run_batch.sh path/to/cfg_dir  # 指定其它目录
+bash run_batch.sh                       # 默认读取 ./configs
+bash run_batch.sh path/to/cfg_dir       # 指定其它目录
+bash run_batch.sh configs dryrun        # 仅做只读预检，不迁移、不创建对象
 ```
 
 **Windows：`run_batch.ps1`**（PowerShell 5.1+，系统自带；脚本须与 `gomysql2pg.exe` 在同一目录）
@@ -160,6 +161,7 @@ bash run_batch.sh path/to/cfg_dir  # 指定其它目录
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\run_batch.ps1
 powershell -ExecutionPolicy Bypass -File .\run_batch.ps1 -ConfigDir my_cfgs
+powershell -ExecutionPolicy Bypass -File .\run_batch.ps1 -Mode dryrun
 ```
 
 **脚本行为**
@@ -169,6 +171,26 @@ powershell -ExecutionPolicy Bypass -File .\run_batch.ps1 -ConfigDir my_cfgs
 3. 顺序逐个调用 `gomysql2pg --config <file>`，单条失败不中断后续；
 4. 全程输出同时打到屏幕和批次日志 `batch-YYYYMMDD-HHMMSS.log`；
 5. 全部结束后打印 success / failed 列表，**退出码等于失败条数**（全部成功为 0）。
+
+**预检模式（dryrun）**
+
+将第二个参数 / `-Mode` 设为 `dryrun`，脚本会改成对每个 yml 调用 `gomysql2pg --config <file> dryRun`，仅做三项只读检查：源 MySQL 连接 ping、目的库连接 ping、目的库是否存在与 `dest.username` 同名的 schema。该模式特点：
+
+- 不创建任何对象、不迁移任何数据，跳过 `yes` 交互确认；
+- 批次日志改名为 `batch-dryrun-YYYYMMDD-HHMMSS.log`；单条失败时还会在 `log/<时间>__src__to__dest/` 下生成 `dryRunFailed.log`，可被 `check_log.sh` / `check_log.ps1` 捕获；
+- 当存在"目的端缺少同名 schema"类失败时，全部跑完后终端最后会追加一段补救 SQL 提示（也同步进 batch 日志），可直接拷贝到目的库执行：
+
+  ```
+  === missing same-name schema(s) detected ===
+  Run the following SQL on the destination database as a privileged user:
+
+  create user admin2 with password '123456';
+  create schema admin2 authorization admin2;
+
+  (Replace '123456' with a real password before executing.)
+  ```
+
+  在目的库以特权用户执行后再重跑批量迁移即可。建议在正式 `migrate` 前先跑一次 `dryrun` 把环境问题（连通性、模式缺失）一次性筛掉。
 
 ### 2.4 查看迁移摘要
 
@@ -333,6 +355,37 @@ gomysql2pg.exe  --config 配置文件 viewOnly
 示例
 gomysql2pg.exe  --config example.yml viewOnly
 ```
+
+#### 2.4.10 预检（dryRun）
+
+仅做只读预检，不创建任何对象，也不迁移任何数据。适用于在批量正式迁移前一次性筛掉连通性和目的端模式缺失等环境问题。
+
+gomysql2pg.exe  --config 配置文件 dryRun
+
+```
+示例
+gomysql2pg.exe  --config example.yml dryRun
+
+Linux / macOS:
+./gomysql2pg --config example.yml dryRun
+```
+
+检查项：
+
+1. `SourcePing`：ping 源 MySQL；
+2. `DestPing`：ping 目的库（自动按 `dest.dbType` 选 `postgres` 或 `opengauss` 驱动）；
+3. `SameNameSchema`：目的库是否存在与 `dest.username` 同名的 schema。
+
+退出码：全部通过为 0；任一失败为 1，并把失败明细写入 `log/<时间>__src__to__dest/dryRunFailed.log`（与 `check_log.sh` / `check_log.ps1` 兼容）。
+
+如果 `SameNameSchema` 报 `no schema named "<user>" in database "<db>"`，请到目的库以特权用户执行：
+
+```sql
+create user <user> with password '123456';
+create schema <user> authorization <user>;
+```
+
+把 `<user>` 替换成 yml 里的 `dest.username`，并把 `'123456'` 换成真实密码。建议结合 `bash run_batch.sh configs dryrun` / `run_batch.ps1 -Mode dryrun` 批量跑一次，脚本会在终端尾部直接给出可拷贝执行的 SQL 列表（详见 2.3 节"预检模式"）。
 
 ## change history
 

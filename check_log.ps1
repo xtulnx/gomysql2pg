@@ -16,6 +16,7 @@ $FailLogs = @(
     "TriggerCreateFailed.log"
     "failedTable.log"
     "errorTableData.log"
+    "dryRunFailed.log"
 )
 
 $WarnLogs = @(

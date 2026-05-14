@@ -135,8 +135,9 @@ Required header columns (first row, case-insensitive): `src_host`, `src_port`, `
 **Linux / macOS: `run_batch.sh`**
 
 ```bash
-bash run_batch.sh                  # default: ./configs
-bash run_batch.sh path/to/cfg_dir  # custom directory
+bash run_batch.sh                       # default: ./configs
+bash run_batch.sh path/to/cfg_dir       # custom directory
+bash run_batch.sh configs dryrun        # read-only pre-flight, no migration / no object creation
 ```
 
 **Windows: `run_batch.ps1`** (PowerShell 5.1+, built into Windows; keep the script next to `gomysql2pg.exe`)
@@ -144,6 +145,7 @@ bash run_batch.sh path/to/cfg_dir  # custom directory
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\run_batch.ps1
 powershell -ExecutionPolicy Bypass -File .\run_batch.ps1 -ConfigDir my_cfgs
+powershell -ExecutionPolicy Bypass -File .\run_batch.ps1 -Mode dryrun
 ```
 
 **Script behavior**
@@ -153,6 +155,26 @@ powershell -ExecutionPolicy Bypass -File .\run_batch.ps1 -ConfigDir my_cfgs
 3. Run `gomysql2pg --config <file>` sequentially; a single failure does NOT abort the rest.
 4. All output is teed to the screen and to a batch log `batch-YYYYMMDD-HHMMSS.log`.
 5. Print a final success / failed summary. **The exit code equals the number of failed configs** (0 on full success).
+
+**Dryrun mode**
+
+Pass `dryrun` as the second positional arg to `run_batch.sh` (or `-Mode dryrun` to `run_batch.ps1`) and the scripts will invoke `gomysql2pg --config <file> dryRun` for each yml. Three read-only checks run per config: source MySQL ping, destination ping, and whether a schema with the same name as `dest.username` exists on the destination. In this mode:
+
+- No objects are created and no data is migrated; the interactive `yes` confirmation is skipped.
+- The batch log is named `batch-dryrun-YYYYMMDD-HHMMSS.log`. Each failing config also writes `dryRunFailed.log` under `log/<timestamp>__src__to__dest/` (picked up by `check_log.sh` / `check_log.ps1`).
+- If any config fails because the destination is missing the same-name schema, after the run the terminal (and batch log) appends a remediation SQL block, ready to copy and paste:
+
+  ```
+  === missing same-name schema(s) detected ===
+  Run the following SQL on the destination database as a privileged user:
+
+  create user admin2 with password '123456';
+  create schema admin2 authorization admin2;
+
+  (Replace '123456' with a real password before executing.)
+  ```
+
+  Run it on the destination as a privileged user, then re-run the batch. It is recommended to run a `dryrun` pass before the real `migrate` to catch connectivity / missing-schema problems in one shot.
 
 ### 4 View Migration Summary
 
@@ -320,6 +342,37 @@ gomysql2pg.exe  --config file.yml viewOnly
 e.g.
 gomysql2pg.exe  --config example.yml viewOnly
 ```
+
+#### 10 DryRun (read-only pre-flight)
+
+Validate the environment without creating any objects or migrating any data. Useful before a real batch migration to filter out connectivity and missing-schema problems in one shot.
+
+gomysql2pg.exe  --config file.yml dryRun
+
+```
+e.g.
+gomysql2pg.exe  --config example.yml dryRun
+
+on Linux and MacOS:
+./gomysql2pg --config example.yml dryRun
+```
+
+Checks performed:
+
+1. `SourcePing`: ping the source MySQL.
+2. `DestPing`: ping the destination (driver auto-selected from `dest.dbType` — `postgres` or `opengauss`).
+3. `SameNameSchema`: a schema with the same name as `dest.username` exists on the destination.
+
+Exit code is 0 when all checks pass; 1 otherwise. On failure, details are written to `log/<timestamp>__src__to__dest/dryRunFailed.log` (compatible with `check_log.sh` / `check_log.ps1`).
+
+If `SameNameSchema` reports `no schema named "<user>" in database "<db>"`, on the destination run as a privileged user:
+
+```sql
+create user <user> with password '123456';
+create schema <user> authorization <user>;
+```
+
+Replace `<user>` with the `dest.username` from the yml and `'123456'` with a real password. For batch use, `bash run_batch.sh configs dryrun` / `run_batch.ps1 -Mode dryrun` print a ready-to-copy SQL list at the end (see "Dryrun mode" under section 3).
 
 ## change history
 

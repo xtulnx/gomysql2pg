@@ -5,18 +5,14 @@
 ## 一、工具特性以及环境要求
 ### 1.1 功能特性
 
-支持MySQL数据库一键迁移到postgresql内核类型的目标数据库，如postgresql数据库、海量数据库vastbase、华为postgresql、电信telepg、人大金仓Kingbase V8R6等
+支持MySQL数据库一键迁移到postgresql内核类型的目标数据库，如postgresql数据库、海量数据库vastbase、华为GaussDB、电信telepg、人大金仓Kingbase V8R6等
 
 - 无需繁琐部署，开箱即用，小巧轻量化
-
+- 支持批量迁移多对数据库
 - 在线迁移MySQL到目标数据库的表、视图、索引、外键、自增列等对象
-
 - 多个goroutine并发迁移数据，充分利用CPU多核性能
-
 - 支持迁移源库部分表功能
-
 - 记录迁移日志，转储表、视图等DDL对象创建失败的sql语句
-
 - 一键迁移MySQL到postgresql，方便快捷，轻松使用
 
 
@@ -128,58 +124,47 @@ gomysql2pg.exe --config example.yml
 
 适用场景：一次迁移多个库 / 多对源-目标。仓库根目录提供两份脚本：`run_batch.sh`（Linux / macOS）和 `run_batch.ps1`（Windows），二者行为、提示、日志格式、退出码完全一致。
 
-**准备**
+1 批量生成配置文件
 
-在 `configs/` 目录放多份 yml（每库一份），文件名建议带数字前缀（如 `01_a.yml`、`02_b.yml`）以控制执行顺序。也可使用 `gen_configs.sh` 从 `configs/db_config.csv` 批量生成：
+编辑 `configs/` 目录下的Excel文件`example.xlsx`在各个表头下方输入正确的连接信息，`src`开头的即源库，`dest`开头的即目标库
+必需的表头列（首行，大小写不敏感）：`src_host`、`src_port`、`src_database`、`src_username`、`src_password`、`dest_host`、`dest_port`、`dest_database`、`dest_username`、`dest_password`。输出文件命名为 `NNN_<src_database>.yml` 按行顺序编号；已存在的文件默认跳过（加 `--overwrite` 覆盖）；发现重复行会直接中止。
 
-```bash
-bash gen_configs.sh                       # 默认读取 configs/db_config.csv，输出到 configs/
-bash gen_configs.sh my.csv out_dir        # 指定 csv 和输出目录
-```
-
-也可以使用 `tools/xlsx2yml` 这个 Go 工具从 xlsx 工作簿批量生成：
+使用 `tools/xlsx2yml` 这个 Go 工具从 xlsx 工作簿批量生成：
 
 ```bash
-go run ./tools/xlsx2yml                              # 默认读取 configs/db_mig_info.xlsx，输出到 configs/
+开发环境运行方式
+go run ./tools/xlsx2yml                              # 默认读取 configs/example.xlsx，输出到 configs/
 go run ./tools/xlsx2yml -f my.xlsx -o out_dir        # 指定输入文件与输出目录
 go run ./tools/xlsx2yml --sheet Sheet2 --overwrite   # 指定 sheet、覆盖已存在的 yml
 go run ./tools/xlsx2yml --schema-mapping             # 同时生成 schemaMapping: { src_db: dest_user }
+或者
+二进制文件运行方式
+xlsx2yml.exe                              # 默认读取 configs/example.xlsx，输出到 configs/
+xlsx2yml.exe -f my.xlsx -o out_dir        # 指定输入文件与输出目录
+xlsx2yml.exe --sheet Sheet2 --overwrite   # 指定 sheet、覆盖已存在的 yml
+xlsx2yml.exe --schema-mapping             # 同时生成 schemaMapping: { src_db: dest_user }
 ```
 
-必需的表头列（首行，大小写不敏感）：`src_host`、`src_port`、`src_database`、`src_username`、`src_password`、`dest_host`、`dest_port`、`dest_database`、`dest_username`、`dest_password`。输出文件命名为 `NNN_<src_database>.yml` 按行顺序编号；已存在的文件默认跳过（加 `--overwrite` 覆盖）；发现重复行会直接中止。
-
-**Linux / macOS：`run_batch.sh`**
-
-```bash
-bash run_batch.sh                       # 默认读取 ./configs
-bash run_batch.sh path/to/cfg_dir       # 指定其它目录
-bash run_batch.sh configs dryrun        # 仅做只读预检，不迁移、不创建对象
+以上执行后会在`configs`目录下生成多个`yml`格式的配置文件
+```
+configs/
+├── 002_db_1.yml
+├── 002_db_2.yml
+└── 003_db_3.yml
 ```
 
-**Windows：`run_batch.ps1`**（PowerShell 5.1+，系统自带；脚本须与 `gomysql2pg.exe` 在同一目录）
+2 迁移预检(dryrun)
+**脚本简介**
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\run_batch.ps1
-powershell -ExecutionPolicy Bypass -File .\run_batch.ps1 -ConfigDir my_cfgs
-powershell -ExecutionPolicy Bypass -File .\run_batch.ps1 -Mode dryrun
-```
+`run_batch.sh`或者`run_batch.ps1`配合参数`dryrun`，脚本会改成对每个 yml 调用 `gomysql2pg --config <file> dryRun`，
+仅做三项只读检查：源 MySQL 连接 ping、目的库连接 ping、目的库是否存在与 `dest.username` 同名的 schema。
+建议在正式 `migrate` 前先跑一次 `dryrun` 把环境问题（连通性、模式缺失）一次性筛掉。
 
 **脚本行为**
 
-1. 先列出预览：`[i] file | src=host:port/db -> dest=user@host:port/db`；
-2. 等待用户输入 `yes` 才开始执行，输入其它内容则放弃并退出（退出码 1）；
-3. 顺序逐个调用 `gomysql2pg --config <file>`，单条失败不中断后续；
-4. 全程输出同时打到屏幕和批次日志 `batch-YYYYMMDD-HHMMSS.log`；
-5. 全部结束后打印 success / failed 列表，**退出码等于失败条数**（全部成功为 0）。
-
-**预检模式（dryrun）**
-
-将第二个参数 / `-Mode` 设为 `dryrun`，脚本会改成对每个 yml 调用 `gomysql2pg --config <file> dryRun`，仅做三项只读检查：源 MySQL 连接 ping、目的库连接 ping、目的库是否存在与 `dest.username` 同名的 schema。该模式特点：
-
-- 不创建任何对象、不迁移任何数据，跳过 `yes` 交互确认；
-- 批次日志改名为 `batch-dryrun-YYYYMMDD-HHMMSS.log`；单条失败时还会在 `log/<时间>__src__to__dest/` 下生成 `dryRunFailed.log`，可被 `check_log.sh` / `check_log.ps1` 捕获；
-- 当存在"目的端缺少同名 schema"类失败时，全部跑完后终端最后会追加一段补救 SQL 提示（也同步进 batch 日志），可直接拷贝到目的库执行：
-
+1. 不创建任何对象、不迁移任何数据，跳过 `yes` 交互确认；
+2. 批次日志改名为 `batch-dryrun-YYYYMMDD-HHMMSS.log`；单条失败时还会在 `log/<时间>__src__to__dest/` 下生成 `dryRunFailed.log`，可被 `check_log.sh` / `check_log.ps1` 捕获；
+3. 当存在"目的端缺少同名 schema"类失败时，全部跑完后终端最后会追加一段补救 SQL 提示（也同步进 batch 日志），可直接拷贝到目的库执行：
   ```
   === missing same-name schema(s) detected ===
   Run the following SQL on the destination database as a privileged user:
@@ -190,7 +175,100 @@ powershell -ExecutionPolicy Bypass -File .\run_batch.ps1 -Mode dryrun
   (Replace '123456' with a real password before executing.)
   ```
 
-  在目的库以特权用户执行后再重跑批量迁移即可。建议在正式 `migrate` 前先跑一次 `dryrun` 把环境问题（连通性、模式缺失）一次性筛掉。
+执行方式
+**Linux / macOS：`run_batch.sh`**
+
+```bash
+bash run_batch.sh configs dryrun        # 仅做只读预检，不迁移、不创建对象
+```
+
+**Windows：`run_batch.ps1`**（非cmd，需使用PowerShell 5.1+，系统自带；脚本默认与 `gomysql2pg.exe` 在同一目录）
+
+```powershell
+开始菜单以管理员运行powershell,执行如下授权powershell脚本执行权限（必须项）
+Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+Get-ExecutionPolicy -List
+```
+
+```powershell
+工具解压之后使用powershell进入到正确的目录比如cd C:\db_tool\gomysql2pg-win-x64-v0.2.10
+运行预检脚本
+.\run_batch.ps1 configs dryrun
+```
+
+预检通过示例，如有错误请查看对应目录的配置文件
+```powershell
+=== batch done 2026-05-15 15:00:51 ===
+success: 3
+  OK   C:\db_tool\gomysql2pg-win-x64-v0.2.10\configs\01_a.yml
+  OK   C:\db_tool\gomysql2pg-win-x64-v0.2.10\configs\02_b.yml
+  OK   C:\db_tool\gomysql2pg-win-x64-v0.2.10\configs\03_c.yml
+failed:  0
+PS C:\db_tool\gomysql2pg-win-x64-v0.2.10>
+```
+
+
+3 正式批量迁移
+`run_batch.sh`或者`run_batch.ps1`执行多个库批量迁移
+**脚本行为**
+
+1. 先列出预览：`[i] file | src=host:port/db -> dest=user@host:port/db`；
+2. 等待用户输入 `yes` 才开始执行，输入其它内容则放弃并退出（退出码 1）；
+3. 顺序逐个调用 `gomysql2pg --config <file>`，单条失败不中断后续；
+4. 全程输出同时打到屏幕和批次日志 `batch-YYYYMMDD-HHMMSS.log`；
+5. 全部结束后打印 success / failed 列表，**退出码等于失败条数**（全部成功为 0）。
+
+
+**Linux / macOS：`run_batch.sh`**
+
+脚本参数
+```bash
+bash run_batch.sh                       # 默认读取当前configs目录
+bash run_batch.sh path/to/cfg_dir       # 指定其它目录
+```
+脚本示例
+```bash
+bash run_batch.sh
+Found 3 config(s) to migrate:
+[1] configs/01_a.yml  |  src=192.168.149.86:3306/tenantdb_a101  ->  dest=admin@192.168.149.95:5432/test
+[2] configs/02_b.yml  |  src=192.168.149.86:3306/tenantdb_a102  ->  dest=admin2@192.168.149.95:5432/test
+[3] configs/03_c.yml  |  src=192.168.149.86:3306/tenantdb_a999  ->  dest=admin3@192.168.149.95:5432/test
+
+Proceed with these 3 migration(s)? [yes/no]: -> 在这里输入yes或者no选择继续或者退出
+```
+
+
+**Windows：`run_batch.ps1`**（PowerShell 5.1+，系统自带；脚本须与 `gomysql2pg.exe` 在同一目录）
+脚本参数
+```powershell
+powershell -ExecutionPolicy Bypass -File .\run_batch.ps1
+powershell -ExecutionPolicy Bypass -File .\run_batch.ps1 -ConfigDir my_cfgs
+```
+
+脚本示例
+开始菜单以管理员运行powershell,执行如下授权powershell脚本执行权限（必须项）
+```powershell
+Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+Get-ExecutionPolicy -List
+```
+
+```powershell
+PS C:\db_tool\gomysql2pg-win-x64-v0.2.10> .\run_batch.ps1
+Found 3 config(s) to migrate:
+  [1] C:\db_tool\gomysql2pg-win-x64-v0.2.10\configs\01_a.yml  |  src=192.168.1.86:3306/db_a101  ->  dest=admin@192.168.1.95:5432/test
+  [2] C:\db_tool\gomysql2pg-win-x64-v0.2.10\configs\02_b.yml  |  src=192.168.1.86:3306/db_a102  ->  dest=admin2@192.168.1.95:5432/test
+  [3] C:\db_tool\gomysql2pg-win-x64-v0.2.10\configs\03_c.yml  |  src=192.168.1.86:3306/db_a999  ->  dest=admin3@192.168.1.95:5432/test
+
+Proceed with these 3 migration(s)? [yes/no]: -> 在这里输入yes或者no选择继续或者退出
+```
+
+
+
+
+
+
+
+
 
 ### 2.4 查看迁移摘要
 
@@ -386,148 +464,3 @@ create schema <user> authorization <user>;
 ```
 
 把 `<user>` 替换成 yml 里的 `dest.username`，并把 `'123456'` 换成真实密码。建议结合 `bash run_batch.sh configs dryrun` / `run_batch.ps1 -Mode dryrun` 批量跑一次，脚本会在终端尾部直接给出可拷贝执行的 SQL 列表（详见 2.3 节"预检模式"）。
-
-## change history
-
-### v0.2.7
-2024-09-23
-
-新增通配符排除表，转储失败的表名到单独的日志`failedTable.log`
-
-### v0.2.6
-2024-08-05
-
-新增驱动支持openGauss(openGauss 5.0.2测试通过)
-
-### v0.2.5
-2024-01-22
-
-调整MySQL的double和float类型适配成pg的double precision
-
-### v0.2.4
-2023-12-20
-
-新增参数useNvarchar2使用nvarchar2类型存储以字符长度作为单位，例如华为GaussDB R3主备版本
-
-### v0.2.3
-2023-10-18
-
-修复查询MySQL数据字典ORDINAL_POSITION没有排序导致获取表结构字段顺序错乱的问题
-
-
-### v0.2.2
-2023-09-28
-
-新增bit类型数据传输到pgsql，修复文本类型中如果带有非法Unicode字符0导致数据无法插入的问题，转储非法数据到日志文件，修复配置文件中缺少最大并发数引发的潜在bug
-
-
-### v0.2.1
-2023-09-14
-
-新增参数`Distributed`，支持分布式数据库如GaussDB 8.1.3
-
-### v0.2.0
-2023-08-09
-
-1.新增参数charInLength,仅当为true的时候，varchar或者char的长度作为字符长度，例如varchar(10 char)，能存10个字符而不是10个字节 2.新增geometry数据类型的处理，目前是把MySQL的geometry类型使用golang的hex.EncodeToString函数转为16进制字符串
-
-### v0.1.9
-2023-07-21
-
-比对功能增加全库比对结果，readme文档修改
-
-
-### v0.1.8
-2023-07-14
-
-增加比对数据库，创建表、索引、外键增加双引号包围表名
-
-
-
-### v0.1.7
-2023-07-11
-
-使用多个goroutine并发创建表，迁移摘要信息优化
-
-### v0.1.6
-2023-07-10
-
-Add Makefile and output config info
-
-
-### v0.1.5
-2023-07-07
-
-增加全局变量通道处理迁移行数据失败的计数，会在迁移摘要中展示
-
-### v0.1.4
-2023-06-30
-
-修复只能迁移linux pg库，在Windows下迁移失败的问题，创建表的方法目前改成了单线程
-
-### v0.1.3
-2023-06-28
-
-增加单独迁移表行数据的命令，迁移摘要优化，错误信息转储到日志文件优化
-
-### v0.1.2
-2023-06-27
-
-增加迁移摘要，完善创建有外键的约束
-
-### v0.1.1
-2023-06-26
-
-增加创建视图、外键、触发器到目标数据库
-
-
-### v0.1.0
-2023-06-16
-
-增加创建索引、主键、等约束
-
-### v0.0.9
-2023-06-14
-
-新增创建序列
-
-
-### v0.0.8
-2023-06-13
-
-使用多个goroutine并发生成每个表的迁移任务、创建表，其余优化
-
-### v0.0.7
-2023-06-12
-
-修复prepareSqlStr中没有行数据被漏掉创建的表,迁移数据前会查询下目标表是否存在,其余优化
-
-### v0.0.6
-2023-06-09
-
-增加创建基本表的功能
-
-### v0.0.5
-2023-06-06
-
-增加标题字符图，显示版本信息,彩色文字显示输出
-
-### v0.0.4
-2023-06-05
-
-在遇到Ctrl+c输入后主动关闭数据库正在运行的sql,输出格式简化,转储迁移失败的表数据到日志目录
-
-### v0.0.3
-2023-06-02
-
-config文件增加端口设定,自定义sql外面包了一层select * from (自定义sql) where 1=0 用于获取列字段，避免查询全表数据,在copy方法的exec刷buffer之前，再一次主动使用row.close关闭数据库连接
-
-### v0.0.2
-2023-05-24
-
-增加排除表参数，以及config yml文件配置异常检查
-
-### v0.0.1
-2023-05-23
-
-log方法打印调用文件以及方法源行数，增加日志重定向到平面文件

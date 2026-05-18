@@ -6,10 +6,10 @@
 
 ### 1.1 功能特性
 
-支持 MySQL 数据库一键迁移到 PostgreSQL 内核类型的目标数据库，如 PostgreSQL、海量数据库 Vastbase、华为 GaussDB、电信 TelePG、人大金仓 Kingbase V8R6 等。
+支持 `MySQL` 数据库一键迁移到 `PostgreSQL` 内核类型的目标数据库，如 `PostgreSQL`、`海量数据库 Vastbase`、`华为 GaussDB`、`电信 TelePG`、`人大金仓 Kingbase V8R6` 等。
 
 - 无需繁琐部署，开箱即用，小巧轻量化
-- 支持批量迁移多对数据库
+- 支持批量迁移多对数据库，比如100对数据库
 - 在线迁移 MySQL 到目标数据库的表、视图、索引、外键、自增列等对象
 - 多个 goroutine 并发迁移数据，充分利用 CPU 多核性能
 - 支持迁移源库部分表功能

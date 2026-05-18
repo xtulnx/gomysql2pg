@@ -66,11 +66,11 @@ func main() {
 	flag.BoolVar(&overwrite, "overwrite", false, "overwrite existing yml files")
 	flag.BoolVar(&yes, "yes", false, "non-interactive: use flag/default values without prompting")
 	flag.BoolVar(&yes, "y", false, "non-interactive (shorthand)")
-	flag.BoolVar(&opts.isGauss, "gauss", true, "whether dest.dbType is Gauss; if false, the dbType line is omitted")
+	flag.BoolVar(&opts.isGauss, "gauss", false, "whether dest.dbType is Gauss; if false, the dbType line is omitted")
 	flag.IntVar(&opts.pageSize, "page-size", 100000, "pageSize")
 	flag.IntVar(&opts.maxParallel, "max-parallel", 32, "maxParallel")
 	flag.BoolVar(&opts.charInLength, "char-in-length", false, "charInLength")
-	flag.BoolVar(&opts.useNvarchar2, "use-nvarchar2", true, "useNvarchar2")
+	flag.BoolVar(&opts.useNvarchar2, "use-nvarchar2", false, "useNvarchar2")
 	flag.BoolVar(&opts.distributed, "distributed", false, "Distributed")
 	flag.Parse()
 

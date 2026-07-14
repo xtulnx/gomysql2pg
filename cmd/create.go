@@ -77,6 +77,7 @@ var createTableCmd = &cobra.Command{
 		// 这里等待上面所有迁移数据的goroutine协程任务完成才会接着运行下面的主程序，如果这里不wait，上面还在迁移行数据的goroutine会被强制中断
 		wg2.Wait()
 		cost := time.Since(start)
+		tableCount, failedCount := getTableCreateStats()
 		log.Info("Table structure synced from MySQL to PostgreSQL ,Source Table Total ", tableCount, " Failed Total ", strconv.Itoa(failedCount))
 		fmt.Println("Table Create finish elapsed time ", cost)
 	},

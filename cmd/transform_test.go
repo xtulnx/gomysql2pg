@@ -4,6 +4,34 @@ import (
 	"testing"
 )
 
+func TestBuildDestDefault(t *testing.T) {
+	tests := []struct {
+		name        string
+		dataType    string
+		sourceValue string
+		want        string
+	}{
+		{name: "quoted varchar", dataType: "varchar", sourceValue: "'mcp'", want: "default 'mcp'"},
+		{name: "plain varchar", dataType: "varchar", sourceValue: "mcp", want: "default 'mcp'"},
+		{name: "empty string", dataType: "varchar", sourceValue: "''", want: "default ''"},
+		{name: "quoted apostrophe", dataType: "varchar", sourceValue: "'O''Reilly'", want: "default 'O''Reilly'"},
+		{name: "uppercase null sentinel", dataType: "varchar", sourceValue: "NULL", want: ""},
+		{name: "lowercase null sentinel", dataType: "timestamp", sourceValue: "null", want: ""},
+		{name: "current timestamp empty call", dataType: "timestamp", sourceValue: "current_timestamp()", want: "default CURRENT_TIMESTAMP"},
+		{name: "numeric default", dataType: "int", sourceValue: "0", want: "default 0"},
+		{name: "text default", dataType: "text", sourceValue: "'json'", want: "default 'json'"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := buildDestDefault(tc.dataType, tc.sourceValue)
+			if got != tc.want {
+				t.Fatalf("buildDestDefault(%q, %q) = %q, want %q", tc.dataType, tc.sourceValue, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestTransformViewDef(t *testing.T) {
 	tests := []struct {
 		name  string

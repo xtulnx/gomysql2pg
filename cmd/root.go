@@ -126,6 +126,7 @@ func mysql2pg(connStr *connect.DbConnStr) {
 	wg2.Wait()
 	endTbl := time.Now()
 	tableCost := time.Since(startTbl)
+	tableCount, failedCount := getTableCreateStats()
 	// 创建表完毕
 	log.Info("Table structure synced from MySQL to PostgreSQL ,Source Table Total ", tableCount, " Failed Total ", strconv.Itoa(failedCount))
 	tabRet = append(tabRet, "Table", startTbl.Format("2006-01-02 15:04:05.000000"), endTbl.Format("2006-01-02 15:04:05.000000"), strconv.Itoa(failedCount), tableCost.String())

@@ -7,12 +7,17 @@ import (
 
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 var tabRet []string
-var tableCount int
-var failedCount int
+var currentTimestampEmptyDefaultRE = regexp.MustCompile(`(?i)^current_timestamp\s*\(\s*\)$`)
+var tableCreateStats struct {
+	sync.Mutex
+	total  int
+	failed int
+}
 
 type Database interface {
 	// TableCreate (logDir string, tableMap map[string][]string) (result []string) 单线程
@@ -50,7 +55,7 @@ type Table struct {
 func (tb *Table) TableCreate(logDir string, tblName string, ch chan struct{}) {
 	defer wg2.Done()
 	var newTable Table
-	tableCount += 1
+	tableNumber := incrementTableCreateTotal()
 	// 使用goroutine并发的创建多个表
 	var colTotal int
 	pgCreateTbl := "create table " + fmt.Sprintf("\"") + tblName + fmt.Sprintf("\"") + "("
@@ -82,18 +87,7 @@ func (tb *Table) TableCreate(logDir string, tblName string, ch chan struct{}) {
 			newTable.destNullable = "null"
 		}
 		// 列字段default默认值的处理
-		switch {
-		case newTable.columnDefault != "null": // 默认值不是null并且是字符串类型下面就需要使用fmt.Sprintf格式化让字符串单引号包围，否则这个字符串是没有引号包围的
-			if newTable.dataType == "varchar" {
-				newTable.destDefault = fmt.Sprintf("default '%s'", newTable.columnDefault)
-			} else if newTable.dataType == "char" {
-				newTable.destDefault = fmt.Sprintf("default '%s'", newTable.columnDefault)
-			} else {
-				newTable.destDefault = fmt.Sprintf("default %s", newTable.columnDefault) // 非字符串类型无需使用单引号包围
-			}
-		default:
-			newTable.destDefault = "" // 如果没有默认值，默认值就是空字符串，即目标没有默认值
-		}
+		newTable.destDefault = buildDestDefault(newTable.dataType, newTable.columnDefault)
 		// 列字段类型的处理
 		switch newTable.dataType {
 		case "int", "mediumint", "tinyint":
@@ -146,13 +140,72 @@ func (tb *Table) TableCreate(logDir string, tblName string, ch chan struct{}) {
 		log.Error("drop table ", tblName, " failed ", err)
 	}
 	// 创建PostgreSQL表结构
-	log.Info(fmt.Sprintf("%v Table total %s create table %s", time.Now().Format("2006-01-02 15:04:05.000000"), strconv.Itoa(tableCount), tblName))
+	log.Info(fmt.Sprintf("%v Table total %s create table %s", time.Now().Format("2006-01-02 15:04:05.000000"), strconv.Itoa(tableNumber), tblName))
 	if _, err = destDb.Exec(pgCreateTbl); err != nil {
 		log.Error("table ", tblName, " create failed  ", err)
 		LogError(logDir, "tableCreateFailed", pgCreateTbl, err)
-		failedCount += 1
+		incrementTableCreateFailed()
 	}
 	<-ch
+}
+
+func incrementTableCreateTotal() int {
+	tableCreateStats.Lock()
+	defer tableCreateStats.Unlock()
+	tableCreateStats.total++
+	return tableCreateStats.total
+}
+
+func incrementTableCreateFailed() {
+	tableCreateStats.Lock()
+	defer tableCreateStats.Unlock()
+	tableCreateStats.failed++
+}
+
+func getTableCreateStats() (total int, failed int) {
+	tableCreateStats.Lock()
+	defer tableCreateStats.Unlock()
+	return tableCreateStats.total, tableCreateStats.failed
+}
+
+// buildDestDefault converts the value returned by MySQL information_schema
+// into a PostgreSQL-compatible DEFAULT clause. Some MySQL versions return
+// string defaults with their surrounding quotes, so quoting them again would
+// produce an invalid doubly quoted string default.
+func buildDestDefault(dataType string, columnDefault string) string {
+	columnDefault = strings.TrimSpace(columnDefault)
+	if columnDefault == "" || strings.EqualFold(columnDefault, "null") {
+		return ""
+	}
+
+	if currentTimestampEmptyDefaultRE.MatchString(columnDefault) {
+		return "default CURRENT_TIMESTAMP"
+	}
+
+	if isStringDefaultType(dataType) {
+		return "default " + quotePostgresStringDefault(columnDefault)
+	}
+
+	return "default " + columnDefault
+}
+
+func isStringDefaultType(dataType string) bool {
+	switch strings.ToLower(dataType) {
+	case "char", "varchar", "text", "tinytext", "mediumtext", "longtext", "json", "enum", "set":
+		return true
+	default:
+		return false
+	}
+}
+
+func quotePostgresStringDefault(value string) string {
+	if len(value) >= 2 && value[0] == '\'' && value[len(value)-1] == '\'' {
+		value = value[1 : len(value)-1]
+		// Normalize an already SQL-escaped quote before escaping for PostgreSQL.
+		value = strings.ReplaceAll(value, "''", "'")
+	}
+	value = strings.ReplaceAll(value, "'", "''")
+	return "'" + value + "'"
 }
 
 func (tb *Table) SeqCreate(logDir string) (result []string) {

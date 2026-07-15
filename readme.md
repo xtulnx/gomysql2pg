@@ -12,7 +12,7 @@ One-click migration from `MySQL` to `PostgreSQL`-kernel databases, including `Po
 
 - No cumbersome deployment — ready to use out of the box, compact and lightweight
 - Batch migration of multiple database pairs (e.g. 100 source-destination pairs) in a single run
-- Online migration of tables, views, indexes, foreign keys, auto-increment columns, and other objects
+- Online migration of tables, table/column comments, views, indexes, foreign keys, auto-increment columns, and other objects
 - Multiple goroutines migrate data concurrently, fully utilizing CPU multi-core performance
 - Supports migrating a subset of tables from the source database
 - Records migration logs and dumps SQL statements for DDL object creation failures
@@ -369,7 +369,7 @@ OK:      2
 
 **Failure log files detected:**
 
-`tableCreateFailed.log`, `seqCreateFailed.log`, `idxCreateFailed.log`, `DistributedAlterFailed.log`, `FkCreateFailed.log`, `viewCreateFailed.log`, `TriggerCreateFailed.log`, `failedTable.log`, `errorTableData.log`, `dryRunFailed.log`
+`tableCreateFailed.log`, `commentCreateFailed.log`, `seqCreateFailed.log`, `idxCreateFailed.log`, `DistributedAlterFailed.log`, `FkCreateFailed.log`, `viewCreateFailed.log`, `TriggerCreateFailed.log`, `failedTable.log`, `errorTableData.log`, `dryRunFailed.log`
 
 **Exit code:** equals the number of `[FAIL]` directories (0 when all pass) — suitable for use in CI/CD pipelines to determine whether batch migration succeeded.
 

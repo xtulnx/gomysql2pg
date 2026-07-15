@@ -32,6 +32,38 @@ func TestBuildDestDefault(t *testing.T) {
 	}
 }
 
+func TestBuildCommentStatements(t *testing.T) {
+	statements := buildCommentStatements(
+		"order",
+		"订单's table",
+		[]columnCommentDefinition{
+			{columnName: `"id"`, comment: "主键"},
+			{columnName: `"owner"`, comment: "owner's name"},
+			{columnName: `"empty"`, comment: ""},
+		},
+	)
+
+	want := []string{
+		`COMMENT ON TABLE "order" IS '订单''s table'`,
+		`COMMENT ON COLUMN "order"."id" IS '主键'`,
+		`COMMENT ON COLUMN "order"."owner" IS 'owner''s name'`,
+	}
+	if len(statements) != len(want) {
+		t.Fatalf("got %d comment statements, want %d: %#v", len(statements), len(want), statements)
+	}
+	for i := range want {
+		if statements[i] != want[i] {
+			t.Errorf("statement[%d] = %q, want %q", i, statements[i], want[i])
+		}
+	}
+}
+
+func TestQuotePostgresIdentifier(t *testing.T) {
+	if got, want := quotePostgresIdentifier(`odd"name`), `"odd""name"`; got != want {
+		t.Fatalf("quotePostgresIdentifier() = %q, want %q", got, want)
+	}
+}
+
 func TestTransformViewDef(t *testing.T) {
 	tests := []struct {
 		name  string

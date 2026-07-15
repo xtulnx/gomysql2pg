@@ -52,9 +52,15 @@ type Table struct {
 	viewSql                string
 }
 
+type columnCommentDefinition struct {
+	columnName string
+	comment    string
+}
+
 func (tb *Table) TableCreate(logDir string, tblName string, ch chan struct{}) {
 	defer wg2.Done()
 	var newTable Table
+	var columnComments []columnCommentDefinition
 	tableNumber := incrementTableCreateTotal()
 	// 使用goroutine并发的创建多个表
 	var colTotal int
@@ -66,7 +72,7 @@ func (tb *Table) TableCreate(logDir string, tblName string, ch chan struct{}) {
 		log.Error(err)
 	}
 	// 查询MySQL表结构
-	sql := fmt.Sprintf("select concat('\"',lower(column_name),'\"'),data_type,ifnull(character_maximum_length,'null'),is_nullable,case  column_default when '( \\'user\\' )' then 'user' else ifnull(column_default,'null') end as column_default,ifnull(numeric_precision,'null'),ifnull(numeric_scale,'null'),ifnull(datetime_precision,'null'),ifnull(column_key,'null'),ifnull(column_comment,'null'),ORDINAL_POSITION from information_schema.COLUMNS where table_schema=database() and table_name='%s' order by ORDINAL_POSITION", tblName)
+	sql := fmt.Sprintf("select concat('\"',lower(column_name),'\"'),data_type,ifnull(character_maximum_length,'null'),is_nullable,case  column_default when '( \\'user\\' )' then 'user' else ifnull(column_default,'null') end as column_default,ifnull(numeric_precision,'null'),ifnull(numeric_scale,'null'),ifnull(datetime_precision,'null'),ifnull(column_key,'null'),ifnull(column_comment,''),ORDINAL_POSITION from information_schema.COLUMNS where table_schema=database() and table_name='%s' order by ORDINAL_POSITION", tblName)
 	//fmt.Println(sql)
 	rows, err := srcDb.Query(sql)
 	if err != nil {
@@ -76,6 +82,13 @@ func (tb *Table) TableCreate(logDir string, tblName string, ch chan struct{}) {
 	for rows.Next() {
 		if err := rows.Scan(&newTable.columnName, &newTable.dataType, &newTable.characterMaximumLength, &newTable.isNullable, &newTable.columnDefault, &newTable.numericPrecision, &newTable.numericScale, &newTable.datetimePrecision, &newTable.columnKey, &newTable.columnComment, &newTable.ordinalPosition); err != nil {
 			log.Error(err)
+			continue
+		}
+		if newTable.columnComment != "" {
+			columnComments = append(columnComments, columnCommentDefinition{
+				columnName: newTable.columnName,
+				comment:    newTable.columnComment,
+			})
 		}
 		//fmt.Println(columnName,dataType,characterMaximumLength,isNullable,columnDefault,numericPrecision,numericScale,datetimePrecision,columnKey,columnComment,ordinalPosition)
 		//适配MySQL字段类型到PostgreSQL字段类型
@@ -145,8 +158,61 @@ func (tb *Table) TableCreate(logDir string, tblName string, ch chan struct{}) {
 		log.Error("table ", tblName, " create failed  ", err)
 		LogError(logDir, "tableCreateFailed", pgCreateTbl, err)
 		incrementTableCreateFailed()
+	} else if applyTableComments(logDir, tblName, columnComments) {
+		incrementTableCreateFailed()
 	}
 	<-ch
+}
+
+func applyTableComments(logDir string, tableName string, columnComments []columnCommentDefinition) bool {
+	tableComment, err := fetchTableComment(tableName)
+	if err != nil {
+		log.Error("query table ", tableName, " comment failed  ", err)
+		LogError(logDir, "commentCreateFailed", "query table comment: "+tableName, err)
+		return true
+	}
+
+	failed := false
+	for _, commentSQL := range buildCommentStatements(tableName, tableComment, columnComments) {
+		if _, err := destDb.Exec(commentSQL); err != nil {
+			log.Error(commentSQL, " create comment failed  ", err)
+			LogError(logDir, "commentCreateFailed", commentSQL, err)
+			failed = true
+		}
+	}
+	return failed
+}
+
+func fetchTableComment(tableName string) (string, error) {
+	var tableComment string
+	err := srcDb.QueryRow(
+		"select ifnull(table_comment,'') from information_schema.tables where table_schema=database() and table_name=?",
+		tableName,
+	).Scan(&tableComment)
+	return tableComment, err
+}
+
+func buildCommentStatements(tableName string, tableComment string, columnComments []columnCommentDefinition) []string {
+	statements := make([]string, 0, len(columnComments)+1)
+	quotedTableName := quotePostgresIdentifier(tableName)
+	if tableComment != "" {
+		statements = append(statements, "COMMENT ON TABLE "+quotedTableName+" IS "+quotePostgresLiteral(tableComment))
+	}
+	for _, column := range columnComments {
+		if column.comment == "" {
+			continue
+		}
+		statements = append(statements, "COMMENT ON COLUMN "+quotedTableName+"."+column.columnName+" IS "+quotePostgresLiteral(column.comment))
+	}
+	return statements
+}
+
+func quotePostgresIdentifier(identifier string) string {
+	return `"` + strings.ReplaceAll(identifier, `"`, `""`) + `"`
+}
+
+func quotePostgresLiteral(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
 func incrementTableCreateTotal() int {
@@ -204,8 +270,7 @@ func quotePostgresStringDefault(value string) string {
 		// Normalize an already SQL-escaped quote before escaping for PostgreSQL.
 		value = strings.ReplaceAll(value, "''", "'")
 	}
-	value = strings.ReplaceAll(value, "'", "''")
-	return "'" + value + "'"
+	return quotePostgresLiteral(value)
 }
 
 func (tb *Table) SeqCreate(logDir string) (result []string) {

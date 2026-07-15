@@ -10,7 +10,7 @@
 
 - 无需繁琐部署，开箱即用，小巧轻量化
 - 支持批量迁移多对数据库，比如100对数据库
-- 在线迁移 MySQL 到目标数据库的表、视图、索引、外键、自增列等对象
+- 在线迁移 MySQL 到目标数据库的表、表和字段注释、视图、索引、外键、自增列等对象
 - 多个 goroutine 并发迁移数据，充分利用 CPU 多核性能
 - 支持迁移源库部分表功能
 - 记录迁移日志，转储表、视图等 DDL 对象创建失败的 SQL 语句
@@ -380,7 +380,7 @@ OK:      2
 
 **检测的失败日志文件：**
 
-`tableCreateFailed.log`、`seqCreateFailed.log`、`idxCreateFailed.log`、`DistributedAlterFailed.log`、`FkCreateFailed.log`、`viewCreateFailed.log`、`TriggerCreateFailed.log`、`failedTable.log`、`errorTableData.log`、`dryRunFailed.log`
+`tableCreateFailed.log`、`commentCreateFailed.log`、`seqCreateFailed.log`、`idxCreateFailed.log`、`DistributedAlterFailed.log`、`FkCreateFailed.log`、`viewCreateFailed.log`、`TriggerCreateFailed.log`、`failedTable.log`、`errorTableData.log`、`dryRunFailed.log`
 
 **退出码：** 等于 `[FAIL]` 的目录数（全部通过为 0），可直接用于 CI/CD 流水线判断批量迁移是否成功。
 
